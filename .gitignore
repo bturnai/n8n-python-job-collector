@@ -6,3 +6,4 @@ tests/fixtures/real/
 # Local launcher generator: contains machine-specific paths.
 scripts/mkwrapper.cjs
 *.env
+docs-local/

@@ -18,7 +18,7 @@ MAX_NEW = 16
 DESCRIPTION_LIMIT = 2200
 REMOTE = "Tavmunka/Remote"
 # UTF-8 bytes that were decoded as Latin-1 somewhere upstream ("donâ\x80\x99t").
-MOJIBAKE_RE = re.compile("[Â-ô][\u0080-¿]{1,3}")
+MOJIBAKE_RE = re.compile("[\u00c2-\u00f4][\u0080-\u00bf]{1,3}")
 
 
 def fix_mojibake(text):

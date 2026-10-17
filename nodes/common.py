@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Europe/Budapest")
 
 # Characters matched by JavaScript's \s and removed by String.prototype.trim().
-JS_WS = "\t\n\v\f\r    -     　﻿"
+JS_WS = "\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 JS_WS_RUN = re.compile("[" + JS_WS + "]+")
 JS_WS_EDGES = re.compile("^[" + JS_WS + "]+|[" + JS_WS + "]+\\Z")
 LONE_SURROGATE = re.compile("[\ud800-\udfff]")
