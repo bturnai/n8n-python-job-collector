@@ -1,0 +1,11 @@
+[project]
+name = "n8n-python-job-collector"
+version = "1.0.0"
+description = "Python Code nodes for an n8n job-collection workflow"
+requires-python = ">=3.13"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

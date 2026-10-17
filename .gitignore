@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.pytest_cache/
+# Real scraped listings and e-mails - local only.
+tests/fixtures/real/
+# Local launcher generator: contains machine-specific paths.
+scripts/mkwrapper.cjs
+*.env

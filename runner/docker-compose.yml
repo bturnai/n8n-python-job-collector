@@ -1,0 +1,19 @@
+# External n8n task runner (JavaScript + Python). n8n itself runs on the host;
+# this container only executes the Code nodes.
+# Start:  docker compose -f runner/docker-compose.yml up -d
+# The shared token is in ~/.n8n/runners.env, which n8n's launcher reads as well.
+services:
+  task-runners:
+    image: n8nio/runners:2.35.7   # must match the n8n version
+    container_name: n8n-runners
+    restart: unless-stopped
+    env_file: ${HOME}/.n8n/runners.env
+    environment:
+      N8N_RUNNERS_TASK_BROKER_URI: http://host.docker.internal:5679
+      N8N_RUNNERS_TASK_TIMEOUT: "900"
+      N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT: "15"
+      TZ: Europe/Budapest
+      GENERIC_TIMEZONE: Europe/Budapest
+    volumes:
+      - ./n8n-task-runners.json:/etc/n8n-task-runners.json:ro
+    mem_limit: 1g
