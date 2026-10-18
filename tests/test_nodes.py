@@ -8,6 +8,7 @@ from datetime import datetime
 
 import api_parse
 import dedupe
+import email_attachments
 import extract_text
 import filter_new
 import report
@@ -173,3 +174,28 @@ def test_request_click_sanitises_the_id():
     out = request_click.main([{"json": {"query": query}}], now=NOW)[0]["json"]
     assert out["filename"] == "kerelem_2026-10-17_213005_4479x.json"
     assert json.loads(out["tartalom"])["kert"] == "2026-10-17T19:30:05.123Z"
+
+
+# --- e-mail attachments ---------------------------------------------------------
+
+def test_email_attachments_move_to_binary():
+    body = {"to": "a@example.com", "subject": "S", "html": "<p>x</p>", "attachments": [
+        {"filename": "cv.docx", "mimeType": "application/x-docx", "content": "UEsDBA=="},
+        {"filename": "empty.txt", "content": ""},  # skipped, but keeps its index
+        "not an attachment",
+        {"content": "dGVzenQ="},
+    ]}
+    out = email_attachments.main([{"json": {"body": body}}])[0]
+    assert out["json"] == {"body": {"to": "a@example.com", "subject": "S", "html": "<p>x</p>"},
+                           "attachmentKeys": "att0,att3"}
+    assert out["binary"]["att0"] == {"data": "UEsDBA==", "mimeType": "application/x-docx",
+                                     "fileName": "cv.docx"}
+    assert out["binary"]["att3"]["fileName"] == "csatolmany_3"
+    assert out["binary"]["att3"]["mimeType"] == "application/octet-stream"
+    assert "attachments" in body  # the incoming item is not modified
+
+
+def test_email_without_attachments():
+    out = email_attachments.main([{"json": {"body": {"to": "a@example.com", "html": "x"}}}])[0]
+    assert out == {"json": {"body": {"to": "a@example.com", "html": "x"}, "attachmentKeys": ""},
+                   "binary": {}}

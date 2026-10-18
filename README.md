@@ -35,7 +35,8 @@ schedule 21:30 / webhook / manual
 
 Separate small workflows store LinkedIn job-alert e-mails (`linkedin_mail.py`)
 and application requests from a one-click e-mail button or an e-mail reply
-(`request_click.py`, `request_reply.py`).
+(`request_click.py`, `request_reply.py`). The e-mail sender workflow turns
+optional base64 attachments into n8n binary data (`email_attachments.py`).
 
 ## Working inside the Python sandbox
 
