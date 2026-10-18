@@ -1,10 +1,13 @@
 """Node "Keresesi URL-ek": builds the profession.hu search-result URLs.
 
-The last URL position is the work-location filter: 6 = remote, 5 = hybrid,
-no code = any location (on-site jobs included).
-"""
+One URL per keyword, location filter and result page:
+10 keywords x (3 + 2 + 3 pages) = 80 URLs.
 
-ZERO_FILLER = ",".join(["0"] * 32)
+A search URL looks like this (32 zeros in the middle, shortened here):
+    https://www.profession.hu/allasok/2,0,0,python,0,0,...,0,6
+                                      |      |              |
+                                    page  keyword   location filter
+"""
 
 KEYWORDS = [
     "data",
@@ -22,23 +25,35 @@ KEYWORDS = [
 # accented words silently fall back to a generic list: it looks like it works,
 # but returns the wrong data. Check that a new keyword really changes the results.
 
-FILTERS = [
+# The last number of the URL filters by work location. Code 0 means "no filter",
+# and then the number is left out of the URL completely.
+LOCATION_FILTERS = [
     {"code": 6, "label": "Tavmunka/Remote", "pages": 3},
     {"code": 5, "label": "Hibrid/Home office", "pages": 2},
     {"code": 0, "label": "Barmilyen (helyszini is)", "pages": 3},
 ]
 
+# The search URL has 32 unused positions; profession.hu expects them as zeros.
+UNUSED_POSITIONS = ",".join(["0"] * 32)
+
+
+def build_search_url(page, keyword, location_code):
+    """Example: build_search_url(2, "python", 6) -> ".../allasok/2,0,0,python,0,...,0,6" """
+    url = f"https://www.profession.hu/allasok/{page},0,0,{keyword},{UNUSED_POSITIONS}"
+    if location_code != 0:
+        url = url + "," + str(location_code)
+    return url
+
 
 def main(items):
-    out = []
+    search_items = []
     for keyword in KEYWORDS:
-        for flt in FILTERS:
-            for page in range(1, flt["pages"] + 1):
-                url = f"https://www.profession.hu/allasok/{page},0,0,{keyword},{ZERO_FILLER}"
-                if flt["code"]:
-                    url += f",{flt['code']}"
-                out.append({"json": {
-                    "url": url, "keyword": keyword,
-                    "placeLabel": flt["label"], "page": page,
+        for location in LOCATION_FILTERS:
+            for page in range(1, location["pages"] + 1):
+                search_items.append({"json": {
+                    "url": build_search_url(page, keyword, location["code"]),
+                    "keyword": keyword,
+                    "placeLabel": location["label"],
+                    "page": page,
                 }})
-    return out
+    return search_items

@@ -7,3 +7,4 @@ tests/fixtures/real/
 scripts/mkwrapper.cjs
 *.env
 docs-local/
+.DS_Store

@@ -151,6 +151,14 @@ def test_report_without_new_jobs_has_empty_list():
     assert "Nem volt uj hirdetes" in out["markdown"]
 
 
+def test_report_state_has_no_repeats():
+    assert report.add_new_values(["a", "b"], ["b", "c", "c"]) == ["a", "b", "c"]
+    # A job collected again (e.g. by two overlapping runs) must not be stored twice.
+    jobs = [{"json": {"id": "1", "title": "Data Analyst", "company": "A"}}]
+    out = report.main([state(ids=["1"], keys=["a|data analyst"])] + jobs, now=NOW)[0]["json"]
+    assert json.loads(out["latottTartalom"]) == {"seenIds": ["1"], "seenKeys": ["a|data analyst"]}
+
+
 def test_report_state_keeps_the_newest_3000():
     old = [str(i) for i in range(3000)]
     out = report.main([state(ids=old), {"json": {"id": "new", "title": "T", "company": "C"}}], now=NOW)
