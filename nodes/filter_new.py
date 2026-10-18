@@ -21,9 +21,8 @@ DATA_TITLE_PATTERN = re.compile(
     re.IGNORECASE | re.ASCII,
 )
 
-# At most this many new jobs per run. Each one means a detail-page download,
-# 1.2 seconds apart, so the site is not flooded with requests.
-MAX_NEW = 16
+#Safety limit
+MAX_NEW = 50
 
 # Every job on a result page is one <li class="advertisement-result-list-item" ...>
 # element; the part in brackets captures its attributes (data-prof-id="..." etc.).

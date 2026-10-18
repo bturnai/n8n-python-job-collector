@@ -71,17 +71,25 @@ def test_filter_new_skips_seen_jobs_by_id_and_by_key():
     assert job["stats"] == {"totalCards": 4, "unique": 4, "fresh": 1, "selected": 1}
 
 
+
+
 def test_filter_new_word_boundary_is_ascii_like_javascript():
     # JS: /\bml\b/i matches in "éML" because é is not an ASCII word character.
-    page = {"json": {"data": card("1", "éML mérnök") + card("2", "HTML coder")}}
+    page = {
+        "json": 
+            {
+                "data": card("1", "éML mérnök") + card("2", "HTML coder")}}
     assert [i["json"]["id"] for i in filter_new.main([page])] == ["1"]
 
 
+
+
 def test_filter_new_caps_the_selection():
-    page = {"json": {"data": "".join(card(str(i), f"Data role {i}") for i in range(30))}}
+    count = filter_new.MAX_NEW + 10
+    page = {"json": {"data": "".join(card(str(i), f"Data role {i}") for i in range(count))}}
     result = filter_new.main([page])
-    assert len(result) == filter_new.MAX_NEW == 16
-    assert result[0]["json"]["stats"]["fresh"] == 30
+    assert len(result) == filter_new.MAX_NEW
+    assert result[0]["json"]["stats"]["fresh"] == count
 
 
 def test_filter_new_returns_marker_when_nothing_is_new():
@@ -108,12 +116,12 @@ def api_item(source, body):
 
 def test_api_parse_normalises_sources_and_repairs_remoteok_text():
     remoteok = [{"legal": "notice"}, {"id": 5, "position": "Data Scientist", "company": "Co",
-                                      "url": "https://r/5", "description": "<p>donâ\x80\x99t</p>",
-                                      "salary_min": 50000, "salary_max": 70000, "tags": ["python", None]}]
+                                    "url": "https://r/5", "description": "<p>donâ\x80\x99t</p>",
+                                    "salary_min": 50000, "salary_max": 70000, "tags": ["python", None]}]
     arbeitnow = {"data": [{"slug": "a", "title": "BI Analyst", "company_name": "X", "url": "https://a",
-                           "remote": True},
-                          {"slug": "b", "title": "Data Engineer", "company_name": "Y", "url": "https://b",
-                           "remote": False}]}
+                        "remote": True},
+                        {"slug": "b", "title": "Data Engineer", "company_name": "Y", "url": "https://b",
+                        "remote": False}]}
     result = api_parse.main([api_item("remoteok", remoteok), api_item("arbeitnow", arbeitnow)])
     jobs = {item["json"]["id"]: item["json"] for item in result}
     assert set(jobs) == {"remoteok:5", "arbeitnow:a"}
@@ -130,8 +138,8 @@ def test_api_parse_ignores_broken_bodies():
 
 def test_dedupe_keeps_first_of_same_company_and_title():
     items = [{"json": {"id": "1", "company": "A", "title": "Data Analyst"}},
-             {"json": {"id": "2", "company": "a", "title": "data  analyst"}},
-             {"json": {"__empty": True}}]
+            {"json": {"id": "2", "company": "a", "title": "data  analyst"}},
+            {"json": {"__empty": True}}]
     assert [i["json"]["id"] for i in dedupe.main(items)] == ["1"]
     assert dedupe.main([{"json": {"__empty": True}}]) == [{"json": {"__empty": True}}]
 
@@ -187,9 +195,9 @@ def test_email_attachments_move_to_binary():
     ]}
     out = email_attachments.main([{"json": {"body": body}}])[0]
     assert out["json"] == {"body": {"to": "a@example.com", "subject": "S", "html": "<p>x</p>"},
-                           "attachmentKeys": "att0,att3"}
+                        "attachmentKeys": "att0,att3"}
     assert out["binary"]["att0"] == {"data": "UEsDBA==", "mimeType": "application/x-docx",
-                                     "fileName": "cv.docx"}
+                                    "fileName": "cv.docx"}
     assert out["binary"]["att3"]["fileName"] == "csatolmany_3"
     assert out["binary"]["att3"]["mimeType"] == "application/octet-stream"
     assert "attachments" in body  # the incoming item is not modified
@@ -198,4 +206,21 @@ def test_email_attachments_move_to_binary():
 def test_email_without_attachments():
     out = email_attachments.main([{"json": {"body": {"to": "a@example.com", "html": "x"}}}])[0]
     assert out == {"json": {"body": {"to": "a@example.com", "html": "x"}, "attachmentKeys": ""},
-                   "binary": {}}
+                "binary": {}}
+
+
+
+def test_is_new_data_job():
+    jobs = [
+        {"id": "2973971", "title": "Data Analyst", "company": "B", "url": "https://x"},
+        {"id": "9", "title": "CE Data Analyst", "company": "   Tesco", "url": "https://x"},
+        {"id": "9", "title": "Babysitter", "company": "B", "url": "https://x"},
+        {"id": "9", "title": "Junior Data Scientist", "company": "HiflyLabs"}
+        ]
+    seen_ids= ["2973971", "8"]
+    seen_keys={dedupe_key("   Tesco", "CE Data Analyst")}
+    
+    assert filter_new.is_new_data_job(jobs[0], seen_ids, seen_keys) is False
+    assert filter_new.is_new_data_job(jobs[1], seen_ids, seen_keys) is False
+    assert filter_new.is_new_data_job(jobs[2], seen_ids, seen_keys) is False
+    assert filter_new.is_new_data_job(jobs[3], seen_ids, seen_keys) is True

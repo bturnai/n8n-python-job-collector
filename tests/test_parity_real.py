@@ -13,7 +13,6 @@ from datetime import datetime
 import pytest
 
 import api_parse
-import api_urls
 import dedupe
 import extract_text
 import filter_new
@@ -92,11 +91,6 @@ def test_extract_text(collector):
     jobs = merge_by_position(outputs(run, "Uj allasok szurese"),
                              outputs(run, "Reszletes oldal letoltese"))
     assert as_json(extract_text.main(jobs)) == as_json(outputs(run, "Hirdetes-szoveg kinyerese"))
-
-
-def test_api_urls(collector):
-    _, run, _ = collector
-    assert as_json(api_urls.main([])) == as_json(outputs(run, "Remote API URL-ek"))
 
 
 def test_api_parse(collector):

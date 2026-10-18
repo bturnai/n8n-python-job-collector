@@ -3,7 +3,7 @@
 Remotive's search is imprecise, so it is queried broadly and filtered locally.
 """
 
-REMOTIVE_QUERIES = ["data", "data analyst", "data engineer", "machine learning"]
+REMOTIVE_QUERIES = ["data", "data analyst", "data scientist", "machine learning"]
 
 # Characters that may appear in a URL as they are. Everything else is
 # percent-encoded, e.g. a space becomes "%20".
@@ -34,10 +34,10 @@ def main(items):
 
     for query in REMOTIVE_QUERIES:
         url = ("https://remotive.com/api/remote-jobs?search="
-               + encode_uri_component(query) + "&limit=40")
+            + encode_uri_component(query) + "&limit=40")
         api_items.append({"json": {"forras": "remotive", "url": url}})
 
     api_items.append({"json": {"forras": "remoteok", "url": "https://remoteok.com/api"}})
     api_items.append({"json": {"forras": "arbeitnow",
-                               "url": "https://www.arbeitnow.com/api/job-board-api"}})
+                            "url": "https://www.arbeitnow.com/api/job-board-api"}})
     return api_items
