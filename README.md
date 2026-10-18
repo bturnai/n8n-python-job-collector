@@ -5,8 +5,9 @@ international job listings, and writes a de-duplicated JSON list for a later
 review step. Every transformation step is a **Python** Code node, running in
 n8n's native Python task runner inside Docker.
 
-The Python nodes replace a working JavaScript version. They were verified
-against it on recorded production data and in a side-by-side run.
+The Python nodes replaced a working JavaScript version in October 2026. Before
+the switch they were verified against it on recorded production data and in a
+side-by-side run.
 
 ## Architecture
 
@@ -66,7 +67,8 @@ Each of these is pinned by a unit test whose expected value was computed with No
 ```
 nodes/      one module per Code node, each with main(items)
 scripts/
-  sync.py                build the node code; `check` validates and runs every node in the runner sandbox
+  sync.py                build the node code; `check` validates and runs every node in the
+                         runner sandbox; `push` loads the code into the published workflow
   workflow_collector.py  generates the collector workflow JSON
   extract_fixtures.py    pulls real node inputs/outputs from stored n8n executions
 runner/     docker-compose.yml and the runner's allow-list for the external task runner

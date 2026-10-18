@@ -9,17 +9,24 @@ Usage:
   python scripts/sync.py build <module>    print the code of one node
   python scripts/sync.py check             validate every node in the runner sandbox,
                                            then run it there on a sample input
+  python scripts/sync.py push <workflow-id> [--from FILE]
+      put the current code into the PUBLISHED version of a workflow and publish it.
+      --from: use the nodes and connections of a generated workflow file instead
+      (scripts/workflow_collector.py). Restart n8n afterwards.
 """
 import ast
 import json
 import pathlib
+import sqlite3
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 NODES_DIR = ROOT / "nodes"
 RUNNER_CONFIG = ROOT / "runner" / "n8n-task-runners.json"
 CONTAINER = "n8n-runners"
+DATABASE = pathlib.Path.home() / ".n8n" / "database.sqlite"
 
 # workflow id -> {node name in n8n: module in nodes/}
 NODES = {
@@ -190,12 +197,95 @@ def check(modules=None):
     return 1 if failed else 0
 
 
+def published_workflow(workflow_id):
+    """The workflow as it runs now.
+
+    n8n keeps a draft (what the editor shows) and a published version (what
+    runs). The draft may hold unfinished edits, so push always starts from the
+    published version.
+    """
+    connection = sqlite3.connect(f"file:{DATABASE}?mode=ro", uri=True)
+    row = connection.execute(
+        "select name, settings, staticData, parentFolderId, activeVersionId "
+        "from workflow_entity where id = ?", (workflow_id,)).fetchone()
+    if row is None:
+        raise SystemExit(f"no workflow with id {workflow_id}")
+    name, settings, static_data, folder_id, version_id = row
+    nodes, connections = connection.execute(
+        "select nodes, connections from workflow_history where versionId = ?",
+        (version_id,)).fetchone()
+    return {
+        "id": workflow_id,
+        "name": name,
+        "active": False,
+        "nodes": json.loads(nodes),
+        "connections": json.loads(connections),
+        "settings": json.loads(settings or "{}"),
+        "staticData": json.loads(static_data) if static_data else None,
+        "parentFolderId": folder_id,
+    }
+
+
+def put_python_code(workflow):
+    """Replace the code of every mapped node with the current code from nodes/."""
+    modules = NODES[workflow["id"]]
+    found = set()
+    for node in workflow["nodes"]:
+        module = modules.get(node["name"])
+        if module is None:
+            continue
+        node["parameters"] = {"language": "pythonNative", "pythonCode": build(module)}
+        node["typeVersion"] = 2
+        found.add(node["name"])
+    missing = set(modules) - found
+    if missing:
+        raise SystemExit(f"nodes not found in the workflow: {sorted(missing)}")
+
+
+def run_n8n(*args):
+    result = subprocess.run(["n8n", *args], capture_output=True, text=True)
+    output = (result.stdout + result.stderr).strip().splitlines()
+    if result.returncode != 0:
+        raise SystemExit("n8n " + " ".join(args) + " failed:\n" + "\n".join(output[-5:]))
+    return output[-1] if output else ""
+
+
+def push(workflow_id, source_file=None):
+    if check(sorted(set(NODES[workflow_id].values()))) != 0:
+        return 1
+    workflow = published_workflow(workflow_id)
+    if source_file:
+        generated = json.loads(pathlib.Path(source_file).read_text())[0]
+        workflow["nodes"] = generated["nodes"]
+        workflow["connections"] = generated["connections"]
+        workflow["settings"] = generated["settings"]
+    put_python_code(workflow)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump([workflow], handle, ensure_ascii=False)
+    print(run_n8n("import:workflow", f"--input={handle.name}"))
+    print(run_n8n("publish:workflow", f"--id={workflow_id}"))
+
+    # Importing can drop the workflow from its folder in the n8n UI; put it back.
+    if workflow["parentFolderId"]:
+        connection = sqlite3.connect(DATABASE)
+        connection.execute("update workflow_entity set parentFolderId = ? where id = ?",
+                           (workflow["parentFolderId"], workflow_id))
+        connection.commit()
+    print(f"{workflow_id}: published. Restart n8n: "
+          "launchctl kickstart -k gui/$(id -u)/hu.turnai.n8n")
+    return 0
+
+
 def main(argv):
     if len(argv) >= 2 and argv[0] == "build":
         sys.stdout.write(build(argv[1]))
         return 0
     if argv and argv[0] == "check":
         return check(argv[1:] or None)
+    if len(argv) >= 2 and argv[0] == "push":
+        source = argv[3] if len(argv) >= 4 and argv[2] == "--from" else None
+        return push(argv[1], source)
     print(__doc__)
     return 2
 
