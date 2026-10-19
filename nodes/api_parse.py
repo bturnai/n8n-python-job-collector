@@ -20,7 +20,7 @@ DATA_TITLE_PATTERN = re.compile(
     r"|business intelligence|python|\bsql\b|report)",
     re.IGNORECASE | re.ASCII,
 )
-MAX_NEW = 50
+MAX_NEW = 50  # safety limit, see MAX_NEW in filter_new.py
 DESCRIPTION_LIMIT = 2200
 REMOTE = "Tavmunka/Remote"
 

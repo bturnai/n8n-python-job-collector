@@ -21,7 +21,10 @@ DATA_TITLE_PATTERN = re.compile(
     re.IGNORECASE | re.ASCII,
 )
 
-#Safety limit
+# Safety limit, not a daily quota: a normal day brings far fewer new jobs. It
+# matters only if the seen-jobs state (latott.json) is lost and every listing
+# looks new: then it stops the run from downloading hundreds of detail pages
+# (1.2 seconds apart) and the evening review from receiving hundreds of jobs.
 MAX_NEW = 50
 
 # Every job on a result page is one <li class="advertisement-result-list-item" ...>

@@ -1,9 +1,13 @@
 """Node "Remote API URL-ek": international remote job APIs (no API key needed).
 
-Remotive's search is imprecise, so it is queried broadly and filtered locally.
+The jobs are filtered locally (api_parse.py), so each API is asked only once.
 """
 
-REMOTIVE_QUERIES = ["data", "data analyst", "data scientist", "machine learning"]
+# Remotive ignores the search word: four different searches ("data", "data analyst",
+# "data engineer", "machine learning") returned byte-identical responses on
+# 2026-10-16 and 2026-10-17. One request is enough; add more words only if a test
+# shows that they return different jobs.
+REMOTIVE_QUERIES = ["data"]
 
 # Characters that may appear in a URL as they are. Everything else is
 # percent-encoded, e.g. a space becomes "%20".
@@ -34,10 +38,10 @@ def main(items):
 
     for query in REMOTIVE_QUERIES:
         url = ("https://remotive.com/api/remote-jobs?search="
-            + encode_uri_component(query) + "&limit=40")
+               + encode_uri_component(query) + "&limit=40")
         api_items.append({"json": {"forras": "remotive", "url": url}})
 
     api_items.append({"json": {"forras": "remoteok", "url": "https://remoteok.com/api"}})
     api_items.append({"json": {"forras": "arbeitnow",
-                            "url": "https://www.arbeitnow.com/api/job-board-api"}})
+                               "url": "https://www.arbeitnow.com/api/job-board-api"}})
     return api_items
