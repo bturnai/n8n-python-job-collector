@@ -1,5 +1,5 @@
 -- Postings that match the search: fully remote, or hybrid / on-site in the
--- Budapest area. One row per posting; the daily e-mail reads one collected_on day.
+-- Budapest area. One row per posting, with the text the evening review reads.
 
 select
     collected_on,
@@ -9,7 +9,9 @@ select
     work_mode,
     location,
     source,
-    url
+    url,
+    techs_raw,
+    description
 
 from {{ ref('stg_job_postings') }}
 

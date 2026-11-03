@@ -24,7 +24,9 @@ select
     p.work_mode,
     p.has_salary,
     p.salary_info,
-    p.url
+    p.url,
+    p.techs_raw,
+    p.description
 from postings p
 join latest_day d on p.collected_on = d.collected_on
 where p.work_mode = 'remote'
