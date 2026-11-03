@@ -1,0 +1,16 @@
+name: jobs
+version: "1.0.0"
+profile: jobs
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  jobs:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table

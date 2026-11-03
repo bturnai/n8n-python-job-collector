@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_job_postings
+    description: One row per job posting, renamed and cleaned, with derived fields.
+    columns:
+      - name: job_id
+        description: "<source>:<external id>; profession.hu ids have no prefix."
+        data_tests:
+          - unique
+          - not_null
+      - name: source
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["profession.hu", "arbeitnow", "remoteok", "remotive"]
+      - name: title
+        data_tests:
+          - not_null
+      - name: work_mode
+        description: remote, hybrid or any (on-site allowed), from the source's place label.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["remote", "hybrid", "any"]
+      - name: collected_on
+        data_tests:
+          - not_null

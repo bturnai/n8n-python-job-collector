@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: mart_relevant_postings
+    description: Remote postings and Budapest-area postings; the daily e-mail selects one collected_on day.
+    columns:
+      - name: job_id
+        data_tests:
+          - unique
+          - not_null
+      - name: url
+        data_tests:
+          - not_null
+  - name: mart_daily_summary
+    description: One row per collection day with total and matching counts.
+    columns:
+      - name: collected_on
+        data_tests:
+          - unique
+          - not_null
+  - name: mart_new_postings
+    description: The newest collection day's matching postings; the source of the daily e-mail.
+    columns:
+      - name: job_id
+        data_tests:
+          - unique
+          - not_null

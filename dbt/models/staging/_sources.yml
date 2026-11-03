@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Daily job postings, loaded unchanged by scripts/load_postgres.py.
+    tables:
+      - name: job_postings
+        config:
+          # A collection runs every evening; no new day for 2 days means it stopped.
+          loaded_at_field: "collected_on::timestamp"
+          freshness:
+            warn_after: {count: 2, period: day}
+            error_after: {count: 4, period: day}

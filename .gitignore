@@ -10,3 +10,7 @@ docs-local/
 .DS_Store
 # Local launchd job: machine-specific paths.
 launchd/
+# dbt build output
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/

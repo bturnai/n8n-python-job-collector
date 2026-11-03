@@ -1,0 +1,13 @@
+# Local connection to the Postgres.app server; no password needed locally.
+jobs:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: 5432
+      user: "{{ env_var('USER') }}"
+      password: ""
+      dbname: jobs
+      schema: analytics
+      threads: 4
