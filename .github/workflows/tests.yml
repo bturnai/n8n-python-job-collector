@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pytest
+        run: pip install "pytest>=8"
+
+      # The parity tests need real scraped data, which is not in the repository,
+      # so they skip here; the node unit tests run.
+      - name: Run tests
+        run: python -m pytest -q -rs
