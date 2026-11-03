@@ -6,7 +6,11 @@ file can be loaded again without creating duplicates. Each file is one transacti
 
 Usage:
   python scripts/load_postgres.py FILE [FILE ...]
+  python scripts/load_postgres.py DIR          every allasok_*.json in DIR, oldest first
   DATABASE_URL="dbname=jobs host=localhost" python scripts/load_postgres.py FILE
+
+Loading a whole directory every night is cheap and self-healing: files already
+loaded are skipped, and a day missed (machine asleep, database down) is caught up.
 
 Default connection: dbname=jobs on the local server.
 """
@@ -15,6 +19,7 @@ import os
 import pathlib
 import re
 import sys
+from datetime import datetime
 
 # Half of a UTF-16 surrogate pair, e.g. an emoji cut in two by the collector's
 # 2200-character limit on descriptions. Not valid UTF-8, so PostgreSQL rejects it.
@@ -81,17 +86,27 @@ def load_file(conn, path):
     return inserted, len(rows) - inserted
 
 
-def main(paths):
+def expand(args):
+    """Files as given; a directory becomes its allasok_*.json files, sorted by date."""
+    paths = []
+    for arg in map(pathlib.Path, args):
+        paths.extend(sorted(arg.glob("allasok_*.json")) if arg.is_dir() else [arg])
+    return paths
+
+
+def main(args):
     import psycopg
 
     dsn = os.environ.get("DATABASE_URL", "dbname=jobs")
     total_in = total_skip = 0
+    print(f"--- {datetime.now():%Y-%m-%d %H:%M:%S}")
     with psycopg.connect(dsn) as conn:
-        for path in map(pathlib.Path, paths):
+        for path in expand(args):
             inserted, skipped = load_file(conn, path)
             total_in += inserted
             total_skip += skipped
-            print(f"{path.name}: {inserted} inserted, {skipped} already present")
+            if inserted:
+                print(f"{path.name}: {inserted} inserted, {skipped} already present")
     print(f"Total: {total_in} inserted, {total_skip} already present")
 
 

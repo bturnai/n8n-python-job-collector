@@ -49,6 +49,13 @@ def test_half_emoji_is_replaced():
     row["payload"].encode("utf-8")
 
 
+def test_directory_expands_to_daily_files_in_date_order(tmp_path):
+    for name in ("allasok_2026-11-01.json", "allasok_2026-10-31.json", "allasok_2026-10-31.md"):
+        (tmp_path / name).write_text("{}")
+    assert [p.name for p in load_postgres.expand([str(tmp_path)])] == [
+        "allasok_2026-10-31.json", "allasok_2026-11-01.json"]
+
+
 def test_one_row_per_posting():
     rows = load_postgres.to_rows(daily(job(id="a:1"), job(id="a:2")), "f.json")
     assert [r["id"] for r in rows] == ["a:1", "a:2"]

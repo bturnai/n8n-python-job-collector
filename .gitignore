@@ -8,3 +8,5 @@ scripts/mkwrapper.cjs
 *.env
 docs-local/
 .DS_Store
+# Local launchd job: machine-specific paths.
+launchd/
