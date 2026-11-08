@@ -63,6 +63,81 @@ therefore mirrors a few JavaScript string semantics:
 
 Each of these is pinned by a unit test whose expected value was computed with Node.js.
 
+## Scoring postings with an LLM, measured against my own decisions
+
+The pipeline collects postings; the question is which of them I would apply to.
+`scripts/llm_score.py` asks Claude for one of three decisions, *would apply*,
+*maybe* or *no* (`jelentkeznék` / `talán` / `nem`), plus a 1-10 fit score, pros,
+cons and missing requirements. The answer is constrained by a JSON schema
+(`output_config.format`) and checked again in code before it is stored in
+`raw.llm_scores` (PostgreSQL). The candidate profile, built from my recent CVs,
+is part of the system prompt.
+
+### Ground truth
+
+I labelled 86 postings by hand. The labelling sheet (`scripts/make_label_sample.py`)
+hides the old Gemini scores, so they could not sway the labels. The labels were
+split once, stratified by decision, 70/30 with a fixed seed: 61 postings to tune
+the prompt on, 25 held back. The held-back set was scored once, with the final
+prompt.
+
+The labels and the profile contain personal data, so they stay local; the code,
+the prompts and the tests are in this repository.
+
+### What changed the result
+
+| Step | Why |
+|---|---|
+| Rules in the prompt, one version per file (`prompts/v2.txt` … `v5.txt`) | Each version is stored with a hash of its text and the profile, so every score points to the exact prompt that produced it |
+| Three runs per prompt version | The same prompt moved by up to 10 percentage points between runs on Haiku. One run per version could not tell a better prompt from a lucky run |
+| Recall on *would apply* as the main metric | Missing a posting I would apply to costs more than an extra *maybe*. Agreement alone misleads: about half of the postings are *no* |
+| Disagreements reviewed by me, rules written from them | v4 and v5 added rules I had applied without writing down: business analyst roles are *no*, an active student status is *no*, a missing tool with an equivalent I know (Teradata for PostgreSQL) is not a gap |
+
+Tuning set (61 postings, Claude Haiku 5.5 unless noted, mean of three runs):
+
+| Prompt | Agreement (range) | Recall on *would apply* (range) | Decisions that change between runs |
+|---|---|---|---|
+| v2 | 60% (57-64) | 39% (27-55) | 13 of 61 |
+| v3 | 56% (51-61) | 48% (36-64) | 12 of 61 |
+| v4 | 80% (79-80) | 45% | 6 of 61 |
+| v5 | 81% (79-82) | 61% (55-64) | 2 of 61 |
+| v5, Claude Sonnet 5.5 | 79% (75-84) | 67% (45-82) | 8 of 61 |
+
+### Result on the held-back postings
+
+25 postings, prompt v5, mean of three runs:
+
+| Scorer | Agreement | Recall on *would apply* | *Would apply* answered *no* |
+|---|---|---|---|
+| Old Gemini scores (19 of 25 scored) | 42% | 50% | 2 |
+| Claude Haiku 5.5 | 73% | 40% | 1 |
+| Claude Sonnet 5.5 | 79% | 53% | 1 |
+
+After the test was scored, one held-back label turned out to break a rule I had
+set on the tuning set before the test: a student job labelled *would apply*,
+although an active student status means *no* for me. With that label corrected,
+Haiku reaches 77% and Sonnet 83% agreement, and neither model answers *no* to a
+posting I would apply to. The table above keeps the original labels because the
+error was found only where a model disagreed; a label error the model happened
+to share would not have been found. All eight label changes are logged locally
+with their reasons.
+
+Haiku scored 81% on the tuning set and 73% on the held-back set; Sonnet scored
+79% on both. The prompt rules were written from Haiku's mistakes on the tuning
+set, so part of Haiku's tuning score did not carry over. Sonnet was not used for
+tuning.
+
+Limits: 25 held-back postings means one posting moves agreement by 4 points, and
+the ground truth is one person's decisions. The whole eval cost about 2 USD in
+API credits, mostly through the Batch API at half price. The scorer is not part
+of the daily run yet; the evening review still scores the postings.
+
+```bash
+python scripts/llm_score.py score --model claude-haiku-5-5 --prompt v5 --run 1 --batch
+python scripts/llm_eval.py                # tuning set: per run, mean, range, majority vote
+python scripts/llm_eval.py --split test   # held-back set, only for the final prompt
+```
+
 ## Repository layout
 
 ```
@@ -72,6 +147,11 @@ scripts/
                          runner sandbox; `push` loads the code into the published workflow
   workflow_collector.py  generates the collector workflow JSON
   extract_fixtures.py    pulls real node inputs/outputs from stored n8n executions
+  make_label_sample.py   draws the hand-labelling sheet for the LLM eval
+  llm_score.py           scores postings with Claude (direct calls or Batch API)
+  llm_eval.py            compares stored verdicts with the hand labels
+prompts/    the scoring prompt, one file per version
+sql/        PostgreSQL tables (raw postings, LLM verdicts)
 runner/     docker-compose.yml and the runner's allow-list for the external task runner
 tests/      unit tests and parity tests
 ```
