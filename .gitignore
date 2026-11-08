@@ -15,3 +15,5 @@ dbt/target/
 dbt/dbt_packages/
 dbt/logs/
 dbt/.user.yml
+# Hand labels for the LLM scoring eval: personal decisions, local only.
+eval/
