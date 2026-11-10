@@ -27,3 +27,6 @@ models:
       - name: collected_on
         data_tests:
           - not_null
+      - name: has_python
+        data_tests:
+          - not_null

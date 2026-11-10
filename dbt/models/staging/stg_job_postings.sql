@@ -22,7 +22,8 @@ renamed as (
             else 'unknown'
         end                                       as work_mode,
         coalesce(location ilike '%budapest%'
-                 or location ilike 'pest megye%', false) as is_budapest_area,
+                 or location ilike 'pest megye%'
+                 OR location ilike '%kerület%', false) as is_budapest_area,
         salary_info,
         salary_info is not null                   as has_salary,
         techs                                     as techs_raw,
@@ -31,7 +32,8 @@ renamed as (
         url,
         collected_on,
         loaded_at,
-        source_file
+        source_file,
+        coalesce(description ilike '%python%', false)	AS has_python
 
     from source
 
