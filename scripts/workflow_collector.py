@@ -23,8 +23,9 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import sync  # noqa: E402
 
-BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+# An honest client name, not a browser imitation: since 2026-10-31 profession.hu's firewall
+# blocks requests that claim to be Chrome but do not behave like one.
+USER_AGENT = "allasfigyelo/1.0 (+https://github.com/bturnai/n8n-python-job-collector)"
 
 
 def python_node(name, module, x, y):
@@ -40,7 +41,7 @@ def http_node(name, x, y, accept_header, interval=None):
             "position": [x, y], "onError": "continueRegularOutput",
             "parameters": {
                 "url": "={{ $json.url }}", "sendHeaders": True,
-                "headerParameters": {"parameters": [{"name": "User-Agent", "value": BROWSER_UA},
+                "headerParameters": {"parameters": [{"name": "User-Agent", "value": USER_AGENT},
                                                     accept_header]},
                 "options": {"batching": {"batch": batch},
                             "response": {"response": {"responseFormat": "text"}},
