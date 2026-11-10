@@ -109,6 +109,9 @@ def test_api_parse(collector):
 def test_dedupe(collector):
     _, run, _ = collector
     result = dedupe.main(outputs(run, "Forrasok egyesitese"))
+    # Intentional difference (2026-11-10): the page statistics are passed on in
+    # an extra marker when no kept job carries them. Drop it before comparing.
+    result = [i for i in result if not (i["json"].get("__empty") and len(result) > 1)]
     assert as_json(result) == as_json(outputs(run, "Duplikatumok kiszurese"))
 
 
@@ -120,10 +123,29 @@ def test_report(collector):
     result = report.main(items, now=run_day)[0]["json"]
 
     new_state = json.loads(result.pop("latottTartalom"))
+    # Intentional difference (2026-11-10): the list also reports the page
+    # statistics and alerts. Remove them before comparing with the original.
+    # (The recorded input comes from the old dedupe, which dropped the statistics.)
+    listing = json.loads(result["jsonTartalom"])
+    listing.pop("riasztasok")
+    listing.pop("forrasok")
+    result["jsonTartalom"] = report.to_json(listing)
+    result["markdown"] = result["markdown"].split("\n**Riasztas:**")[0]
     assert result == expected
     if name == "allasfigyelo0001_366":
         # The production state after this run is exactly what n8n stored.
         assert new_state == current_state()
+
+
+def test_recorded_run_reaches_report_without_alert(collector):
+    # The new dedupe passes the page statistics on, so a normal recorded day
+    # (result pages full of jobs) must not raise an alert.
+    _, run, state = collector
+    deduped = dedupe.main(outputs(run, "Forrasok egyesitese"))
+    out = report.main([state_item(state)] + deduped)[0]["json"]
+    listing = json.loads(out["jsonTartalom"])
+    assert listing["riasztasok"] == []
+    assert listing["forrasok"]["profession.hu"]["talalatiKartyak"] > 0
 
 
 def test_linkedin_mail():

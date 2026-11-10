@@ -10,9 +10,22 @@ Two jobs count as the same when their company and title match (see
 from common import dedupe_key
 
 
+def find_stats(items):
+    """The profession.hu page statistics, or None.
+
+    The filter node puts them (`stats`) on each of its jobs, or on its "no new
+    job" marker when it found nothing new.
+    """
+    for item in items:
+        if item["json"].get("stats"):
+            return item["json"]["stats"]
+    return None
+
+
 def main(items):
     keys_already_kept = set()
     kept_jobs = []
+    stats = find_stats(items)
 
     for item in items:
         job = item["json"]
@@ -35,5 +48,14 @@ def main(items):
     # An n8n node with no output stops the rest of the workflow, so instead of an
     # empty list we send a marker item that the next node recognises.
     if len(kept_jobs) == 0:
-        return [{"json": {"__empty": True}}]
+        marker = {"__empty": True}
+        if stats is not None:
+            marker["stats"] = stats
+        return [{"json": marker}]
+
+    # The report needs the page statistics to tell a quiet day from a blocked
+    # site. If only the remote APIs brought jobs, no kept job carries them, so a
+    # marker passes them on.
+    if stats is not None and not any(job["json"].get("stats") for job in kept_jobs):
+        kept_jobs.append({"json": {"__empty": True, "stats": stats}})
     return kept_jobs

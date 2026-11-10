@@ -167,6 +167,31 @@ def test_report_without_new_jobs_has_empty_list():
     assert "Nem volt uj hirdetes" in out["markdown"]
 
 
+def test_dedupe_passes_on_page_stats_when_only_api_jobs_are_kept():
+    stats = {"totalCards": 0, "unique": 0, "fresh": 0, "selected": 0}
+    items = [{"json": {"__empty": True, "stats": stats}},
+             {"json": {"id": "remoteok:1", "company": "A", "title": "Data Analyst"}}]
+    out = dedupe.main(items)
+    assert [i["json"].get("id") for i in out] == ["remoteok:1", None]
+    assert out[-1]["json"] == {"__empty": True, "stats": stats}
+    # No job at all: the marker itself carries the stats.
+    assert dedupe.main(items[:1]) == [{"json": {"__empty": True, "stats": stats}}]
+
+
+def test_report_alerts_when_result_pages_hold_no_jobs():
+    blocked = {"json": {"__empty": True, "stats": {"totalCards": 0}}}
+    listing = json.loads(report.main([state(), blocked], now=NOW)[0]["json"]["jsonTartalom"])
+    assert listing["forrasok"] == {"profession.hu": {"talalatiKartyak": 0}}
+    assert len(listing["riasztasok"]) == 1 and "blokkol" in listing["riasztasok"][0]
+
+
+def test_report_has_no_alert_on_a_quiet_day():
+    quiet = {"json": {"__empty": True, "stats": {"totalCards": 1031}}}
+    out = report.main([state(), quiet], now=NOW)[0]["json"]
+    assert json.loads(out["jsonTartalom"])["riasztasok"] == []
+    assert "Riasztas" not in out["markdown"]
+
+
 def test_report_state_has_no_repeats():
     assert report.add_new_values(["a", "b"], ["b", "c", "c"]) == ["a", "b", "c"]
     # A job collected again (e.g. by two overlapping runs) must not be stored twice.

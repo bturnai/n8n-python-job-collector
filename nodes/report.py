@@ -55,12 +55,36 @@ def to_review_job(job):
     }
 
 
-def build_markdown(day, job_count):
+def find_stats(items):
+    """The profession.hu page statistics passed on by the dedupe node, or None."""
+    for item in items:
+        if item["json"].get("stats"):
+            return item["json"]["stats"]
+    return None
+
+
+def source_alerts(stats):
+    """Warnings for the evening diagnostics; empty on a normal day.
+
+    A day without new jobs is normal, but the result pages always list jobs
+    (about a thousand cards on 80 pages). Zero cards means the pages did not
+    arrive: the site blocks the download, or its HTML changed.
+    """
+    if stats is None:
+        return ["profession.hu: nincs adat a talalati oldalakrol (a letoltes vagy a feldolgozas elakadt)."]
+    if stats.get("totalCards", 0) == 0:
+        return ["profession.hu: 0 hirdetes a letoltott talalati oldalakon. "
+                "Valoszinuleg blokkoljak a letoltest, vagy megvaltozott az oldal."]
+    return []
+
+
+def build_markdown(day, job_count, alerts=()):
     """The short note saved next to the JSON list."""
+    warning = "".join(f"\n**Riasztas:** {alert}\n" for alert in alerts)
     if job_count > 0:
         return (f"# Allasfigyelo - nyers lista\n\n**Datum:** {day}\n\n"
-                f"{job_count} uj hirdetes gyujtve. Az ertekelest az esti atnezes vegzi.\n")
-    return f"# Allasfigyelo\n\n**Datum:** {day}\n\nNem volt uj hirdetes.\n"
+                f"{job_count} uj hirdetes gyujtve. Az ertekelest az esti atnezes vegzi.\n{warning}")
+    return f"# Allasfigyelo\n\n**Datum:** {day}\n\nNem volt uj hirdetes.\n{warning}"
 
 
 def main(items, now=None):
@@ -97,16 +121,23 @@ def main(items, now=None):
         "seenKeys": add_new_values(state["seenKeys"], new_keys),
     }
 
-    # 5. One output item. The next n8n nodes write each text field to a file.
+    # 5. Did profession.hu deliver its pages? The evening diagnostics e-mails
+    #    the alerts (since 2026-11-10; a blocked site went unnoticed for 10 days).
+    stats = find_stats(rest)
+    alerts = source_alerts(stats)
+
+    # 6. One output item. The next n8n nodes write each text field to a file.
     job_list = {
         "datum": day,
         "atnezett": len(collected),
         "hiba": False,
         "pontozatlan": True,
+        "forrasok": {"profession.hu": {"talalatiKartyak": stats.get("totalCards") if stats else None}},
+        "riasztasok": alerts,
         "allasok": collected,
     }
     output = {
-        "markdown": build_markdown(day, len(collected)),
+        "markdown": build_markdown(day, len(collected), alerts),
         "datum": day,
         "filename": f"allasok_{day}.md",
         # hits, reviewed, talalatok: left over from the old version that scored jobs
