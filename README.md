@@ -1,7 +1,7 @@
 # n8n job collector with Python Code nodes
 
-A daily job-collection pipeline: n8n schedules the run, downloads Hungarian and
-international job listings, and writes a de-duplicated JSON list for a later
+A daily job-collection pipeline: n8n schedules the run, downloads job listings
+from profession.hu, and writes a de-duplicated JSON list for a later
 review step. Every transformation step is a **Python** Code node, running in
 n8n's native Python task runner inside Docker.
 
@@ -23,15 +23,21 @@ schedule 21:30 / webhook / manual
   │    download detail pages
   │    merge job + page
   │    extract posting text ──────────────► extract_text.py
-  ├─ remote APIs: build URLs ─────────────► api_urls.py
-  │    download Remotive / RemoteOK / Arbeitnow
-  │    merge response + source, + state
-  │    normalise, pick new jobs ──────────► api_parse.py
-  ├─ merge both sources
-  │    drop in-run duplicates ────────────► dedupe.py
+  ├─ drop in-run duplicates ──────────────► dedupe.py
   │    build report + new state ──────────► report.py
   └─ write allasok_<date>.json/.md, latott.json
 ```
+
+Three remote job APIs (Remotive, RemoteOK, Arbeitnow; `api_urls.py`,
+`api_parse.py`) were a second branch until November 2026. In two months only one
+of their postings made my shortlist, so the branch is off by default;
+`workflow_collector.py --remote-apis` puts it back.
+
+The daily list also reports how many job cards the profession.hu result pages
+held. On a normal day that is about a thousand; zero means the pages did not
+arrive (blocked or changed), and the list gets an alert that the evening
+diagnostics e-mails. This was added after profession.hu's firewall started
+blocking requests that imitated a browser, and ten days passed unnoticed.
 
 Separate small workflows store LinkedIn job-alert e-mails (`linkedin_mail.py`)
 and application requests from a one-click e-mail button or an e-mail reply

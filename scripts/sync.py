@@ -30,12 +30,12 @@ DATABASE = pathlib.Path.home() / ".n8n" / "database.sqlite"
 
 # workflow id -> {node name in n8n: module in nodes/}
 NODES = {
+    # The remote-API nodes (api_urls, api_parse) are left out of the workflow since
+    # 2026-11-10; see workflow_collector.py --remote-apis.
     "allasfigyelo0001": {
         "Keresesi URL-ek": "search_urls",
         "Uj allasok szurese": "filter_new",
         "Hirdetes-szoveg kinyerese": "extract_text",
-        "Remote API URL-ek": "api_urls",
-        "API talalatok feldolgozasa": "api_parse",
         "Duplikatumok kiszurese": "dedupe",
         "Riport osszeallitasa": "report",
     },

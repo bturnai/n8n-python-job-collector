@@ -68,7 +68,10 @@ def write_node(name, x, y, path_expr):
                                                "options": {}}}
 
 
-def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=True):
+def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=True,
+                   remote_apis=False):
+    """remote_apis: also query Remotive, RemoteOK and Arbeitnow. Off since 2026-11-10:
+    in two months only one of their postings reached the shortlist."""
     data_dir = data_dir.rstrip("/")
     state_path = f"{data_dir}/allapot/latott.json"
     nodes = [
@@ -94,15 +97,6 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
                   {"name": "Accept-Language", "value": "hu-HU,hu;q=0.9"}, interval=1200),
         merge_node("Allas + reszletes oldal", 1344, 0, by_position=True),
         python_node("Hirdetes-szoveg kinyerese", "extract_text", 1568, 0),
-        # Remote job APIs
-        python_node("Remote API URL-ek", "api_urls", 0, 432),
-        http_node("Remote API-k letoltese", 224, 432,
-                  {"name": "Accept", "value": "application/json"}),
-        merge_node("API-k + forrasok", 448, 432, by_position=True),
-        merge_node("API-k + latott-lista", 672, 432, by_position=False),
-        python_node("API talalatok feldolgozasa", "api_parse", 896, 432),
-        # Both sources
-        merge_node("Forrasok egyesitese", 1792, 224, by_position=False),
         python_node("Duplikatumok kiszurese", "dedupe", 2016, 224),
         merge_node("Riport + latott-lista", 2240, 224, by_position=False),
         python_node("Riport osszeallitasa", "report", 2464, 224),
@@ -115,7 +109,17 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
         to_text_node("Latott-lista alakitas", 2688, 448, "latottTartalom", "latott.json"),
         write_node("Latott-lista mentese", 2912, 448, state_path),
     ]
-    starts = ["Keresesi URL-ek", "Remote API URL-ek", "Latott-lista beolvasasa"]
+    if remote_apis:
+        nodes += [
+            python_node("Remote API URL-ek", "api_urls", 0, 432),
+            http_node("Remote API-k letoltese", 224, 432,
+                      {"name": "Accept", "value": "application/json"}),
+            merge_node("API-k + forrasok", 448, 432, by_position=True),
+            merge_node("API-k + latott-lista", 672, 432, by_position=False),
+            python_node("API talalatok feldolgozasa", "api_parse", 896, 432),
+            merge_node("Forrasok egyesitese", 1792, 224, by_position=False),
+        ]
+    starts = ["Keresesi URL-ek", "Latott-lista beolvasasa"] + (["Remote API URL-ek"] if remote_apis else [])
     triggers = ["Kezi inditas", "Webhook inditas"]
     if schedule:
         nodes.insert(0, {"name": "Minden nap 21:30", "type": "n8n-nodes-base.scheduleTrigger",
@@ -138,15 +142,6 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
         ("Uj allasok szurese", "Allas + reszletes oldal", 0),
         ("Reszletes oldal letoltese", "Allas + reszletes oldal", 1),
         ("Allas + reszletes oldal", "Hirdetes-szoveg kinyerese", 0),
-        ("Hirdetes-szoveg kinyerese", "Forrasok egyesitese", 0),
-        ("Remote API URL-ek", "Remote API-k letoltese", 0),
-        ("Remote API URL-ek", "API-k + forrasok", 0),
-        ("Remote API-k letoltese", "API-k + forrasok", 1),
-        ("Latott-lista JSON", "API-k + latott-lista", 0),
-        ("API-k + forrasok", "API-k + latott-lista", 1),
-        ("API-k + latott-lista", "API talalatok feldolgozasa", 0),
-        ("API talalatok feldolgozasa", "Forrasok egyesitese", 1),
-        ("Forrasok egyesitese", "Duplikatumok kiszurese", 0),
         ("Latott-lista JSON", "Riport + latott-lista", 0),
         ("Duplikatumok kiszurese", "Riport + latott-lista", 1),
         ("Riport + latott-lista", "Riport osszeallitasa", 0),
@@ -157,6 +152,20 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
         ("Riport osszeallitasa", "Latott-lista alakitas", 0),
         ("Latott-lista alakitas", "Latott-lista mentese", 0),
     ]
+    if remote_apis:
+        links += [
+            ("Hirdetes-szoveg kinyerese", "Forrasok egyesitese", 0),
+            ("Remote API URL-ek", "Remote API-k letoltese", 0),
+            ("Remote API URL-ek", "API-k + forrasok", 0),
+            ("Remote API-k letoltese", "API-k + forrasok", 1),
+            ("Latott-lista JSON", "API-k + latott-lista", 0),
+            ("API-k + forrasok", "API-k + latott-lista", 1),
+            ("API-k + latott-lista", "API talalatok feldolgozasa", 0),
+            ("API talalatok feldolgozasa", "Forrasok egyesitese", 1),
+            ("Forrasok egyesitese", "Duplikatumok kiszurese", 0),
+        ]
+    else:
+        links.append(("Hirdetes-szoveg kinyerese", "Duplikatumok kiszurese", 0))
     connections = {}
     for source, target, index in links:
         outputs = connections.setdefault(source, {"main": [[]]})["main"][0]
@@ -175,9 +184,12 @@ def main(argv):
     parser.add_argument("--webhook-path", default="allasfigyelo-inditas")
     parser.add_argument("--webhook-id", default="a11a5f19-0000-4000-8000-000000000001")
     parser.add_argument("--no-schedule", action="store_true")
+    parser.add_argument("--remote-apis", action="store_true",
+                        help="also query Remotive, RemoteOK and Arbeitnow (off since 2026-11-10)")
     args = parser.parse_args(argv)
     workflow = build_workflow(args.data_dir, args.id, args.name, args.webhook_path,
-                              args.webhook_id, schedule=not args.no_schedule)
+                              args.webhook_id, schedule=not args.no_schedule,
+                              remote_apis=args.remote_apis)
     pathlib.Path(args.out).write_text(json.dumps([workflow], ensure_ascii=False, indent=1))
     print(f"{args.out}: {len(workflow['nodes'])} nodes")
 
