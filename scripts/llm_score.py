@@ -1,11 +1,17 @@
 """Score hand-labelled postings with Claude and store the verdicts in raw.llm_scores.
 
-    python scripts/llm_score.py split                      # fix the train/test split once
-    python scripts/llm_score.py score --model claude-haiku-5-5 --limit 10
-    python scripts/llm_score.py score --model claude-sonnet-5-5 --batch
-    python scripts/llm_score.py score --prompt v2 --run 2 --batch   # repeat a run to measure noise
+What it does:
+  split  - divides Bálint's hand-labelled postings into a train set (to tune the
+           prompt on) and a test set (scored once, at the end). Run once.
+  score  - sends postings to Claude with the scoring prompt and stores each answer
+           (decision, score, pros, cons, missing) in PostgreSQL.
 
-The prompt is tuned on the train split only; the test split is scored once, at the end.
+    python scripts/llm_score.py split                                   # once
+    python scripts/llm_score.py score --model claude-haiku-5-5 --limit 10
+    python scripts/llm_score.py score --prompt v5 --run 2 --batch       # repeat a run
+    python scripts/llm_score.py score --prompt v5 --rag --batch         # with RAG examples
+
+The comparison with the hand labels is in scripts/llm_eval.py.
 """
 import argparse
 import csv
@@ -19,93 +25,237 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-EVAL_DIR = ROOT / "eval"
-LABELS_FILE = EVAL_DIR / "labels.xlsx"
-SPLIT_FILE = EVAL_DIR / "split.csv"
-PROFILE_FILE = EVAL_DIR / "profile.md"
-ENV_FILE = ROOT / "anthropic.env"
+EVAL_DIR = ROOT / "eval"                   # local only: the labels are personal data
+LABELS_FILE = EVAL_DIR / "labels.xlsx"     # Bálint's hand labels
+SPLIT_FILE = EVAL_DIR / "split.csv"        # which posting is train and which is test
+PROFILE_FILE = EVAL_DIR / "profile.md"     # his profile, built from his CVs
+ENV_FILE = ROOT / "anthropic.env"          # the API key (git-ignored)
+PROMPTS_DIR = ROOT / "prompts"             # the scoring rules, one file per version
 
+# The three answers the model may give.
 DECISIONS = ["jelentkeznék", "talán", "nem"]
-TEST_SHARE = 0.3
-PROMPTS_DIR = ROOT / "prompts"
-# v2: Hungarian reasons for German postings; Kaggle, thesis, dbt in profile.
-# v3: reporting analysts are targets, business analysts stay "talán"; 1-3 years and cut-off text don't lower.
-DEFAULT_PROMPT = "v3"
 
+# 30% of the labelled postings are held back as the test set.
+TEST_SHARE = 0.3
+
+# The prompt version used when --prompt is not given. v5 is the one chosen by the eval
+# (prompts/v2.txt ... v5.txt; what changed between them is in the README).
+DEFAULT_PROMPT = "v5"
+
+# The shape the model's answer must have (a JSON schema). The API makes the model
+# answer in exactly this shape, so the answer can always be read by code.
 SCHEMA = {
     "type": "object",
     "properties": {
-        "pros": {"type": "array", "items": {"type": "string"}},
-        "cons": {"type": "array", "items": {"type": "string"}},
-        "missing": {"type": "array", "items": {"type": "string"}},
-        "decision": {"type": "string", "enum": DECISIONS},
-        "score": {"type": "integer"},
+        "pros": {"type": "array", "items": {"type": "string"}},      # reasons for
+        "cons": {"type": "array", "items": {"type": "string"}},      # reasons against
+        "missing": {"type": "array", "items": {"type": "string"}},   # requirements he lacks
+        "decision": {"type": "string", "enum": DECISIONS},           # only these three values
+        "score": {"type": "integer"},                                # fit, 1-10
     },
     "required": ["pros", "cons", "missing", "decision", "score"],
     "additionalProperties": False,
 }
 
 
+# --- The train / test split ----------------------------------------------------
+
 def make_split(labels, test_share, seed):
-    """Stratified split: the same share of each decision goes to test. labels: {job_id: decision}."""
-    rng = random.Random(seed)
-    split = {}
+    """Divide the labelled postings into train and test.
+
+    labels: {job_id: decision}, for example {"3038064": "talán", ...}
+    Returns {job_id: "train" or "test"}.
+
+    The split is stratified: the same share of each decision goes to test. With a
+    plain random split, the few "jelentkeznék" postings could all end up on one side.
+    The seed makes it reproducible: the same seed always gives the same split.
+    """
+    rnd = random.Random(seed)
+    
+    split={}
     for decision in DECISIONS:
-        ids = sorted(i for i, d in labels.items() if d == decision)
-        rng.shuffle(ids)
-        n_test = round(len(ids) * test_share)
-        for n, job_id in enumerate(ids):
-            split[job_id] = "test" if n < n_test else "train"
+        ids=[]
+        for job_id, label in labels.items():
+            if label == decision:
+                ids.append(job_id)
+        ids.sort()
+        rnd.shuffle(ids)
+        
+        test_edge= round(len(ids) * test_share)
+        
+        count=0
+        for job_id in ids:
+            if (count< test_edge):
+                split[job_id] = "test"
+            else:
+                split[job_id] = "train"
+            count+=1
+    
     return split
 
 
 def read_labels():
+    """Bálint's hand labels from eval/labels.xlsx: {job_id: decision}."""
     from openpyxl import load_workbook
 
-    ws = load_workbook(LABELS_FILE, read_only=True).active
-    rows = ws.iter_rows(values_only=True)
-    header = list(next(rows))
-    decision, job_id = header.index("döntés"), header.index("job_id")
-    return {r[job_id]: r[decision] for r in rows if r[decision] in DECISIONS}
+    sheet = load_workbook(LABELS_FILE, read_only=True).active
+    rows = sheet.iter_rows(values_only=True)
+    header = list(next(rows))                 # the first row holds the column names
+    decision_column = header.index("döntés")
+    id_column = header.index("job_id")
+
+    labels = {}
+    for row in rows:
+        decision = row[decision_column]
+        if decision in DECISIONS:             # rows he has not labelled yet are skipped
+            labels[row[id_column]] = decision
+    return labels
 
 
 def read_split():
+    """eval/split.csv as {job_id: {"job_id": ..., "label": ..., "split": "train"/"test"}}."""
+    split = {}
     with open(SPLIT_FILE, newline="", encoding="utf-8") as f:
-        return {r["job_id"]: r for r in csv.DictReader(f)}
+        for row in csv.DictReader(f):
+            split[row["job_id"]] = row
+    return split
 
+
+# --- The prompt ------------------------------------------------------------------
 
 def system_prompt(name):
+    """The two parts of the system prompt: the rules (prompts/<name>.txt) and his profile."""
     rubric = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
     profile = PROFILE_FILE.read_text(encoding="utf-8").replace(" [CONFIRM]", "")
     return rubric, profile
 
 
 def prompt_version(name, rubric, profile):
-    digest = hashlib.sha256((rubric + profile).encode("utf-8")).hexdigest()[:8]
-    return f"{name}-{digest}"
+    """A name for the exact prompt, stored next to every score: for example "v5-2d1d54b2".
+
+    The 8 characters are a fingerprint (hash) of the text. If even one character
+    changes, the fingerprint changes, so every stored score points to the exact
+    prompt that produced it.
+    """
+    text= rubric + profile 
+    version = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    
+    return f"{name}-{version}"
 
 
-def posting_message(p):
-    fields = [("Title", p["title"]), ("Company", p["company"]), ("Location", p["location"]),
-              ("Work mode", p["place_label"]), ("Salary", p["salary_info"]),
-              ("Tags", p["techs"]), ("Description", p["description"])]
-    return "\n".join(f"{name}: {value}" for name, value in fields if value)
+def posting_message(posting):
+    """The posting as text, one field per line. Empty fields are left out.
+
+    For example:
+        Title: iREMS BI Developer
+        Company: iREMS Hungary Kft.
+        Location: Pest megye
+        Description: ...
+    """
+    fields = [("Title", posting["title"]),
+                ("Company", posting["company"]),
+                ("Location", posting["location"]),
+                ("Work mode", posting["place_label"]),
+                ("Salary", posting["salary_info"]),
+                ("Tags", posting["techs"]),
+                ("Description", posting["description"])]
+    lines = []
+    for name, value in fields:
+        if value:                              # skips None and ""
+            lines.append(f"{name}: {value}")
+    return "\n".join(lines)
+
+
+def user_message(posting, examples=""):
+    """The user message: the posting to score.
+
+    With RAG, the examples block (scripts/rag.py) comes first, then the posting.
+    """
+    if examples=="":
+        return posting_message(posting)
+    examples += "\n\n"
+    examples+= "Posting to decide on:\n" 
+    examples+= posting_message(posting)
+    
+    return examples
+
+
+def request_params(model, effort, rubric, profile, posting, examples=""):
+    """Everything one API request needs, as a dict."""
+    prompt={"model": model,
+            "max_tokens": 8000,
+            "system": 
+            [
+                {
+                    "type":"text",
+                    "text":rubric
+                },
+                {
+                    "type":"text",
+                    "text":profile,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
+            "messages": 
+            [
+                {
+                    "role": "user",
+                    "content": user_message(posting, examples),
+                }
+            ],
+            "output_config": 
+            {
+                "effort": effort,
+                "format":
+                {
+                    "type": "json_schema", 
+                    "schema": SCHEMA
+                }
+            }
+            }
+    return prompt
+
+
+
+def message_text(message):
+    """The text of the model's answer.
+
+    stop_reason "end_turn" means the model finished its answer. Anything else (for
+    example "max_tokens": it ran out of room) means the answer may be cut off.
+    """
+    if message.stop_reason != "end_turn":
+        raise ValueError(f"stop_reason {message.stop_reason}")
+    
+    for row in message.content:
+
+        if row.type== "text":
+            return row.text
+            
+    raise ValueError("no text block in the answer")
 
 
 def parse_verdict(text):
-    """Validate the model's JSON; raises ValueError on anything outside the contract."""
-    verdict = json.loads(text)
-    if verdict["decision"] not in DECISIONS:
-        raise ValueError(f"unknown decision {verdict['decision']!r}")
-    if not 1 <= verdict["score"] <= 10:
-        raise ValueError(f"score out of range: {verdict['score']}")
-    return verdict
+    """The model's JSON answer as a dict. Raises ValueError if it breaks the rules.
 
+    The API already enforces SCHEMA, but the code checks again: the score range is
+    not in the schema, and a stored wrong value would silently spoil the eval.
+    """
+    text=json.loads(text)
+    if text["decision"] not in DECISIONS:
+        raise ValueError(f"{text["decision"]} is not acceptable decision")
+    if text["score"]<1 or text["score"]>10:
+        raise ValueError(f"{text["score"]} outside the acceptable range")
+    
+    return text
+
+
+# --- The database ------------------------------------------------------------------
 
 def load_env():
+    """Read the API key from anthropic.env into the environment, without printing it."""
     for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        name, sep, value = line.strip().partition("=")
-        if sep and name:
+        name, separator, value = line.strip().partition("=")
+        if separator and name:
             os.environ.setdefault(name, value)
 
 
@@ -116,31 +266,56 @@ def connect():
 
 
 def load_postings(conn, ids):
+    """The postings with these ids, from raw.job_postings, as a list of dicts.
+
+    The rows come back in the database's order, not necessarily in the order of ids.
+    """
     rows = conn.execute(
-        """select id, title, company, location, place_label, salary_info, techs, description
-           from raw.job_postings where id = any(%s)""", (list(ids),)).fetchall()
+        """
+        select 
+            id,
+            title,
+            company,
+            location,
+            place_label,
+            salary_info,
+            techs,
+            description
+        from
+            raw.job_postings 
+        where 
+            id = any(%s)
+        """, (list(ids),)).fetchall()
     keys = ["id", "title", "company", "location", "place_label", "salary_info", "techs", "description"]
-    return [dict(zip(keys, r)) for r in rows]
+    postings = []
+    for row in rows:
+        postings.append(dict(zip(keys, row)))   # zip pairs each key with its value
+    return postings
 
 
-def request_params(model, effort, rubric, profile, posting):
-    return {
-        "model": model,
-        "max_tokens": 8000,
-        "system": [{"type": "text", "text": rubric},
-                   {"type": "text", "text": profile, "cache_control": {"type": "ephemeral"}}],
-        "messages": [{"role": "user", "content": posting_message(posting)}],
-        "output_config": {"effort": effort, "format": {"type": "json_schema", "schema": SCHEMA}},
-    }
+def total_input_tokens(usage):
+    """Every input token of one request, also the ones read from or written to the cache.
 
-
-def message_text(msg):
-    if msg.stop_reason != "end_turn":
-        raise ValueError(f"stop_reason {msg.stop_reason}")
-    return next(b.text for b in msg.content if b.type == "text")
+    usage: message.usage. The two cache fields are None when there was no cache.
+    For example: input 200, cache read 800, cache creation None -> 1000
+    """
+    total=usage.input_tokens
+    if usage.cache_creation_input_tokens is not None:
+        total += usage.cache_creation_input_tokens
+    if usage.cache_read_input_tokens is not None:
+        total+=usage.cache_read_input_tokens
+    return total
 
 
 def save(conn, job_id, model, version, effort, run, verdict, usage, batch_id=None):
+    """Store one verdict in raw.llm_scores.
+
+    One row per (posting, model, prompt version, effort, run). If that row already
+    exists (the same run scored again), it is overwritten, not added a second time:
+    running the same thing twice never creates duplicates.
+    """
+    input_tokens = total_input_tokens(usage)
+
     conn.execute(
         """insert into raw.llm_scores (job_id, model, prompt_version, effort, run, decision, score,
                                        pros, cons, missing, input_tokens, output_tokens, batch_id)
@@ -151,53 +326,87 @@ def save(conn, job_id, model, version, effort, run, verdict, usage, batch_id=Non
                input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
                batch_id = excluded.batch_id, scored_at = now()""",
         (job_id, model, version, effort, run, verdict["decision"], verdict["score"],
-         json.dumps(verdict["pros"], ensure_ascii=False), json.dumps(verdict["cons"], ensure_ascii=False),
+         json.dumps(verdict["pros"], ensure_ascii=False),
+         json.dumps(verdict["cons"], ensure_ascii=False),
          json.dumps(verdict["missing"], ensure_ascii=False),
-         usage.input_tokens + (usage.cache_read_input_tokens or 0) + (usage.cache_creation_input_tokens or 0),
-         usage.output_tokens, batch_id))
+         input_tokens, usage.output_tokens, batch_id))
 
 
-def score_sync(client, conn, postings, model, effort, run, rubric, profile, version):
-    for p in postings:
-        msg = client.messages.create(**request_params(model, effort, rubric, profile, p))
+# --- Scoring: one by one, or as a batch ------------------------------------------------
+
+def score_sync(client, conn, postings, model, effort, run, rubric, profile, version, examples):
+    """Score the postings one by one: each request waits for its answer. Full price."""
+    for posting in postings:
+        params = request_params(model, effort, rubric, profile, posting, examples.get(posting["id"], ""))
+        message = client.messages.create(**params)   # ** passes the dict's items as arguments
         try:
-            verdict = parse_verdict(message_text(msg))
-        except (ValueError, KeyError, StopIteration) as e:
-            print(f"  {p['id']}: invalid answer ({e})", file=sys.stderr)
+            verdict = parse_verdict(message_text(message))
+        except (ValueError, KeyError) as error:
+            print(f"  {posting['id']}: invalid answer ({error})", file=sys.stderr)
             continue
-        save(conn, p["id"], model, version, effort, run, verdict, msg.usage)
+        save(conn, posting["id"], model, version, effort, run, verdict, message.usage)
         conn.commit()
-        print(f"  {p['id']}: {verdict['decision']} {verdict['score']} "
-              f"({msg.usage.input_tokens}+{msg.usage.output_tokens} tokens)")
+        print(f"  {posting['id']}: {verdict['decision']} {verdict['score']} "
+              f"({message.usage.input_tokens}+{message.usage.output_tokens} tokens)")
 
 
-def score_batch(client, conn, postings, model, effort, run, rubric, profile, version):
+def batch_id_for(job_id):
+    """A request id the Batch API accepts: only letters, digits, _ and -, at most 64 long.
+
+    Some job ids have other characters, e.g. "remoteok:1136222" -> "remoteok_1136222".
+    """
+    result = ""
+    for ch in job_id:
+        if (ch.isascii() and ch.isalnum()) or ch == "_" or ch == "-":
+            result = result + ch
+        else:
+            result = result + "_"
+    return result[:64]
+
+
+def score_batch(client, conn, postings, model, effort, run, rubric, profile, version, examples):
+    """Score all postings in one batch: half price, but the answers come back later.
+
+    1. Send every request at once.  2. Wait until the batch has ended.
+    3. Read the results and store them.
+    """
     from anthropic.types.messages.batch_create_params import Request
 
-    batch = client.messages.batches.create(requests=[
-        Request(custom_id=re.sub(r"[^A-Za-z0-9_-]", "_", p["id"])[:64],
-                params=request_params(model, effort, rubric, profile, p))
-        for p in postings])
+    # Step 1: send every request at once.
+    requests = []
+    job_id_by_request = {}
+    for posting in postings:
+        params = request_params(model, effort, rubric, profile, posting, examples.get(posting["id"], ""))
+        request_id = batch_id_for(posting["id"])
+        requests.append(Request(custom_id=request_id, params=params))
+        job_id_by_request[request_id] = posting["id"]
+    batch = client.messages.batches.create(requests=requests)
     print(f"batch {batch.id} submitted; polling every 60 s", flush=True)
-    by_custom_id = {re.sub(r"[^A-Za-z0-9_-]", "_", p["id"])[:64]: p["id"] for p in postings}
+
+    # Step 2: ask every minute whether the batch has finished.
     while client.messages.batches.retrieve(batch.id).processing_status != "ended":
         time.sleep(60)
+
+    # Step 3: the results, in any order; the request id says which posting each is.
     for result in client.messages.batches.results(batch.id):
-        job_id = by_custom_id[result.custom_id]
-        if result.result.type != "succeeded":
+        job_id = job_id_by_request[result.custom_id]
+        if result.result.type != "succeeded":   # errored, canceled or expired: not billed
             print(f"  {job_id}: {result.result.type}", file=sys.stderr)
             continue
-        msg = result.result.message
+        message = result.result.message
         try:
-            verdict = parse_verdict(message_text(msg))
-        except (ValueError, KeyError, StopIteration) as e:
-            print(f"  {job_id}: invalid answer ({e})", file=sys.stderr)
+            verdict = parse_verdict(message_text(message))
+        except (ValueError, KeyError) as error:
+            print(f"  {job_id}: invalid answer ({error})", file=sys.stderr)
             continue
-        save(conn, job_id, model, version, effort, run, verdict, msg.usage, batch.id)
+        save(conn, job_id, model, version, effort, run, verdict, message.usage, batch.id)
     conn.commit()
 
 
+# --- The two commands ----------------------------------------------------------------
+
 def cmd_split(args):
+    """python scripts/llm_score.py split: write eval/split.csv once."""
     if SPLIT_FILE.exists() and not args.force:
         sys.exit(f"{SPLIT_FILE.name} already exists; the split is fixed (use --force to redo it)")
     labels = read_labels()
@@ -207,49 +416,115 @@ def cmd_split(args):
         writer.writerow(["job_id", "label", "split"])
         for job_id in sorted(split):
             writer.writerow([job_id, labels[job_id], split[job_id]])
-    counts = {}
-    for job_id, part in split.items():
-        counts[(part, labels[job_id])] = counts.get((part, labels[job_id]), 0) + 1
+
+    # Print how many postings of each decision went to each side.
     for part in ("train", "test"):
-        print(part, {d: counts.get((part, d), 0) for d in DECISIONS})
+        counts = {}
+        for decision in DECISIONS:
+            counts[decision] = 0
+        for job_id, side in split.items():
+            if side == part:
+                counts[labels[job_id]] = counts[labels[job_id]] + 1
+        print(part, counts)
+
+
+# A made-up answer in the shape of SCHEMA, so --dry-run can show the reading step too.
+SAMPLE_ANSWER = ('{"pros": ["Power BI, SQL"], "cons": ["Pest megye, nem Budapest"], '
+                 '"missing": ["iREMS"], "decision": "talán", "score": 5}')
+
+
+def show_requests(postings, args, rubric, profile, examples):
+    """--dry-run: print what would be sent, without calling the API (no cost, nothing stored)."""
+    for posting in postings:
+        params = request_params(args.model, args.effort, rubric, profile, posting,
+                                examples.get(posting["id"], ""))
+        print(f"\n===== {posting['id']}: {posting['title']}")
+        print(f"system: rules {len(params['system'][0]['text'])} characters, "
+              f"profile {len(params['system'][1]['text'])} characters")
+        for message in params["messages"]:
+            print(f"--- {message['role']} message ---")
+            print(message["content"])
+    print("\n--- reading a sample answer ---")
+    print(parse_verdict(SAMPLE_ANSWER))
 
 
 def cmd_score(args):
+    """python scripts/llm_score.py score: score the train (or test) postings."""
     import anthropic
 
     load_env()
     split = read_split()
-    ids = sorted(i for i, r in split.items() if r["split"] == args.split)
-    if args.limit:
+
+    # The postings of the chosen set (train by default).
+    ids = []
+    for job_id, row in split.items():
+        if row["split"] == args.split:
+            ids.append(job_id)
+    ids.sort()
+    if args.limit:                             # a small random sample, e.g. to try a prompt
         ids = random.Random(args.seed).sample(ids, min(args.limit, len(ids)))
+    if args.job_id:                            # only this one posting
+        ids = [args.job_id]
+
     rubric, profile = system_prompt(args.prompt)
-    version = prompt_version(args.prompt, rubric, profile)
-    client = anthropic.Anthropic()
+    version = prompt_version(args.prompt, rubric, profile)   # e.g. "v5-2d1d54b2"
+    if args.rag:
+        # A separate name, so RAG runs never overwrite the plain runs: the rows are keyed
+        # by (job_id, model, prompt_version, effort, run).
+        version += "--rag"
+
     with connect() as conn:
         postings = load_postings(conn, ids)
+
+        # With --rag, every posting gets its own examples block; without it, none.
+        examples = {}
+        if args.rag:
+            import rag
+            examples = rag.examples_for_all(conn, postings, split)
+
         print(f"{len(postings)} {args.split} postings, {args.model}, effort {args.effort}, "
               f"{version}, run {args.run}", flush=True)
-        score = score_batch if args.batch else score_sync
-        score(client, conn, postings, args.model, args.effort, args.run, rubric, profile, version)
+        if args.dry_run:
+            show_requests(postings, args, rubric, profile, examples)
+            return
+
+        client = anthropic.Anthropic()         # reads the API key from the environment
+        if args.batch:
+            score_batch(client, conn, postings, args.model, args.effort, args.run,
+                        rubric, profile, version, examples)
+        else:
+            score_sync(client, conn, postings, args.model, args.effort, args.run,
+                       rubric, profile, version, examples)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    p_split = sub.add_parser("split")
-    p_split.add_argument("--seed", type=int, default=42)
-    p_split.add_argument("--force", action="store_true")
-    p_score = sub.add_parser("score")
-    p_score.add_argument("--model", default="claude-haiku-5-5")
-    p_score.add_argument("--effort", default="medium", choices=["low", "medium", "high"])
-    p_score.add_argument("--prompt", default=DEFAULT_PROMPT, help="file name in prompts/, without .txt")
-    p_score.add_argument("--run", type=int, default=1, help="repeat index; keeps earlier runs")
-    p_score.add_argument("--split", default="train", choices=["train", "test"])
-    p_score.add_argument("--limit", type=int)
-    p_score.add_argument("--seed", type=int, default=42)
-    p_score.add_argument("--batch", action="store_true")
+    commands = parser.add_subparsers(dest="cmd", required=True)
+
+    split_command = commands.add_parser("split")
+    split_command.add_argument("--seed", type=int, default=42)
+    split_command.add_argument("--force", action="store_true")
+
+    score_command = commands.add_parser("score")
+    score_command.add_argument("--model", default="claude-haiku-5-5")
+    score_command.add_argument("--effort", default="medium", choices=["low", "medium", "high"])
+    score_command.add_argument("--prompt", default=DEFAULT_PROMPT, help="file name in prompts/, without .txt")
+    score_command.add_argument("--run", type=int, default=1, help="repeat index; keeps earlier runs")
+    score_command.add_argument("--split", default="train", choices=["train", "test"])
+    score_command.add_argument("--limit", type=int)
+    score_command.add_argument("--seed", type=int, default=42)
+    score_command.add_argument("--batch", action="store_true", help="Batch API: half price, slower")
+    score_command.add_argument("--job-id", help="score only this posting")
+    score_command.add_argument("--dry-run", action="store_true",
+                               help="print the requests instead of sending them (no cost)")
+    score_command.add_argument("--rag", action="store_true",
+                               help="show the most similar labelled train postings as examples")
+
     args = parser.parse_args()
-    {"split": cmd_split, "score": cmd_score}[args.cmd](args)
+    if args.cmd == "split":
+        cmd_split(args)
+    else:
+        cmd_score(args)
 
 
 if __name__ == "__main__":

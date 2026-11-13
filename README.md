@@ -156,8 +156,10 @@ scripts/
   make_label_sample.py   draws the hand-labelling sheet for the LLM eval
   llm_score.py           scores postings with Claude (direct calls or Batch API)
   llm_eval.py            compares stored verdicts with the hand labels
+  embed.py               embeds postings locally (multilingual-e5-small) into pgvector
+  rag.py                 picks the most similar labelled train postings as examples
 prompts/    the scoring prompt, one file per version
-sql/        PostgreSQL tables (raw postings, LLM verdicts)
+sql/        PostgreSQL tables (raw postings, LLM verdicts, posting embeddings)
 runner/     docker-compose.yml and the runner's allow-list for the external task runner
 tests/      unit tests and parity tests
 ```

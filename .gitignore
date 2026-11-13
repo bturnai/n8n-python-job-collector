@@ -17,3 +17,6 @@ dbt/logs/
 dbt/.user.yml
 # Hand labels for the LLM scoring eval: personal decisions, local only.
 eval/
+.vscode/
+# Practice exercises for learning the code: local only.
+gyakorlas/
