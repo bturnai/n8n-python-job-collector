@@ -59,3 +59,12 @@ def test_directory_expands_to_daily_files_in_date_order(tmp_path):
 def test_one_row_per_posting():
     rows = load_postgres.to_rows(daily(job(id="a:1"), job(id="a:2")), "f.json")
     assert [r["id"] for r in rows] == ["a:1", "a:2"]
+
+
+# --- refetching the texts cut at 2200 characters ---------------------------------
+
+def test_refetch_replaces_only_a_longer_version_of_the_same_text():
+    import refetch_texts
+    assert refetch_texts.is_longer_version("Feladatok: SQL, Pyt", "Feladatok: SQL, Python, Excel")
+    assert not refetch_texts.is_longer_version("Feladatok: SQL", "Egészen más hirdetés, hosszabban")
+    assert not refetch_texts.is_longer_version("Feladatok: SQL, Python", "Feladatok: SQL")

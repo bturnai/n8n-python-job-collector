@@ -1,6 +1,7 @@
 """Embed postings with a local multilingual model and find similar ones in PostgreSQL (pgvector).
 
     python scripts/embed.py embed                        # embed new or changed postings
+    python scripts/embed.py embed --profiles             # embed the Claude profiles instead
     python scripts/embed.py neighbors <job_id> --k 5     # the most similar labelled train postings
 
 The text is the title plus the description, without the company name.
@@ -18,6 +19,9 @@ MAX_TOKENS = 512
 # e5 models were trained with a prefix; "query: " on both sides is the one for comparing
 # texts of the same kind (posting with posting), "passage: " is for documents searched by a question.
 PREFIX = "query: "
+# The embeddings of the Claude profiles (scripts/posting_profile.py) are stored next to
+# the full-text ones, under this name in the model column.
+PROFILE_KEY = MODEL + ":profile"
 
 
 def embedding_text(title, description):
@@ -28,21 +32,37 @@ def text_sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def texts_to_embed(conn, profiles):
+    """(job_id, text) for every posting: the full text, or with profiles=True the profile."""
+    texts = []
+    if profiles:
+        from posting_profile import profile_text
+        rows = conn.execute("""select p.job_id, j.title, p.profile from features.posting_profiles p
+                               join raw.job_postings j on j.id = p.job_id""").fetchall()
+        for job_id, title, profile in rows:
+            texts.append((job_id, PREFIX + profile_text(title, profile)))
+    else:
+        for job_id, title, description in conn.execute(
+                "select id, title, description from raw.job_postings").fetchall():
+            texts.append((job_id, embedding_text(title, description)))
+    return texts
+
+
 def cmd_embed(args):
     from pgvector.psycopg import register_vector
     from sentence_transformers import SentenceTransformer
 
+    key = PROFILE_KEY if args.profiles else MODEL
     with connect() as conn:
         register_vector(conn)
-        rows = conn.execute("select id, title, description from raw.job_postings").fetchall()
+        rows = texts_to_embed(conn, args.profiles)
         done = dict(conn.execute("select job_id, text_sha from features.job_embeddings where model = %s",
-                                 (MODEL,)).fetchall())
+                                 (key,)).fetchall())
         todo = []
-        for job_id, title, description in rows:
-            text = embedding_text(title, description)
+        for job_id, text in rows:
             if done.get(job_id) != text_sha(text):
                 todo.append((job_id, text))
-        print(f"{len(rows)} postings, {len(todo)} to embed with {MODEL}", flush=True)
+        print(f"{len(rows)} texts, {len(todo)} to embed as {key}", flush=True)
         if not todo:
             return
         model = SentenceTransformer(MODEL)
@@ -64,14 +84,17 @@ def cmd_embed(args):
                 on conflict 
                     (job_id, model) do update set embedding = excluded.embedding,
                     text_sha = excluded.text_sha, truncated = excluded.truncated, embedded_at = now()""",
-                (job_id, MODEL, vector, text_sha(text), n_tokens > MAX_TOKENS))
+                (job_id, key, vector, text_sha(text), n_tokens > MAX_TOKENS))
         conn.commit()
         truncated = sum(n > MAX_TOKENS for n in lengths)
         print(f"stored {len(todo)}; {truncated} longer than {MAX_TOKENS} tokens (the model reads the start only)")
 
 
-def nearest(conn, job_id, candidate_ids, k):
-    """The k candidates closest to job_id by cosine distance; job_id itself is never returned."""
+def nearest(conn, job_id, candidate_ids, k, key=MODEL):
+    """The k candidates closest to job_id by cosine distance; job_id itself is never returned.
+
+    key: which embeddings to compare, MODEL (full text) or PROFILE_KEY (Claude profiles).
+    """
     return conn.execute(
         """
         select 
@@ -92,7 +115,7 @@ def nearest(conn, job_id, candidate_ids, k):
         limit 
             %s
         """,
-        (job_id, MODEL, list(candidate_ids), job_id, k)).fetchall()
+        (job_id, key, list(candidate_ids), job_id, k)).fetchall()
 
 
 def cmd_neighbors(args):
@@ -110,7 +133,8 @@ def cmd_neighbors(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("embed")
+    p_embed = sub.add_parser("embed")
+    p_embed.add_argument("--profiles", action="store_true", help="embed the Claude profiles")
     p_nb = sub.add_parser("neighbors")
     p_nb.add_argument("job_id")
     p_nb.add_argument("--k", type=int, default=5)
