@@ -373,15 +373,14 @@ def score_batch(client, conn, postings, model, effort, run, rubric, profile, ver
     1. Send every request at once.  2. Wait until the batch has ended.
     3. Read the results and store them.
     """
-    from anthropic.types.messages.batch_create_params import Request
-
     # Step 1: send every request at once.
     requests = []
     job_id_by_request = {}
     for posting in postings:
         params = request_params(model, effort, rubric, profile, posting, examples.get(posting["id"], ""))
         request_id = batch_id_for(posting["id"])
-        requests.append(Request(custom_id=request_id, params=params))
+        # One batch request: its id and the same params a direct call would get.
+        requests.append({"custom_id": request_id, "params": params})
         job_id_by_request[request_id] = posting["id"]
     batch = client.messages.batches.create(requests=requests)
     print(f"batch {batch.id} submitted; polling every 60 s", flush=True)
