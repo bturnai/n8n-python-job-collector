@@ -69,12 +69,12 @@ def main():
     import psycopg
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--split", default="train", choices=["train", "test"])
+    parser.add_argument("--split", default="train", choices=["train", "test", "all"])
     args = parser.parse_args()
 
     with open(SPLIT_FILE, newline="", encoding="utf-8") as f:
         split = {r["job_id"]: r for r in csv.DictReader(f)}
-    labels = {i: r["label"] for i, r in split.items() if r["split"] == args.split}
+    labels = {i: r["label"] for i, r in split.items() if args.split == "all" or r["split"] == args.split}
     train = [(r["label"], i) for i, r in split.items() if r["split"] == "train"]
 
     with psycopg.connect(os.environ.get("DATABASE_URL", "dbname=jobs")) as conn:

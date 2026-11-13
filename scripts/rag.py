@@ -111,18 +111,37 @@ def train_candidates(split):
     return ids
 
 
-def examples_for(conn, job_id, split):
+def labelled_candidates(split):
+    """Every hand-labelled job_id, sorted: the example pool of the leave-one-out eval
+    and of daily use, where all his decisions may serve as examples.
+
+    The posting being scored is never its own example: nearest() leaves it out, and
+    pick_examples() drops near-duplicates (a re-post of the same posting).
+    """
+    ids = []
+    for job_id in split:
+        ids.append(job_id)
+    ids.sort()
+    return ids
+
+
+def examples_for(conn, job_id, split, pool="train"):
     """The examples block for one posting, ready to put into the prompt.
 
     conn:  the database connection
     split: the rows of eval/split.csv, by job_id, for example
            {"3038067": {"label": "talán", "split": "train"}, ...}
+    pool:  "train" - examples only from the train set (the train/test eval)
+           "all"   - examples from every labelled posting (leave-one-out, daily use)
     """
     from embed import nearest
     from llm_score import load_postings
 
     # Step 1: the postings the examples may come from.
-    candidates = train_candidates(split)
+    if pool == "all":
+        candidates = labelled_candidates(split)
+    else:
+        candidates = train_candidates(split)
 
     # Step 2: the most similar candidates, from the database. We ask for a few more
     # than K, in case some are skipped as near-duplicates in step 3.
@@ -145,11 +164,11 @@ def examples_for(conn, job_id, split):
     return format_examples(examples)
 
 
-def examples_for_all(conn, postings, split):
+def examples_for_all(conn, postings, split, pool="train"):
     """The examples block for every posting to score, by job_id."""
     blocks = {}
     for posting in postings:
-        blocks[posting["id"]] = examples_for(conn, posting["id"], split)
+        blocks[posting["id"]] = examples_for(conn, posting["id"], split, pool)
     return blocks
 
 

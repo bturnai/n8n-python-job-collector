@@ -455,10 +455,10 @@ def cmd_score(args):
     load_env()
     split = read_split()
 
-    # The postings of the chosen set (train by default).
+    # The postings of the chosen set (train by default; "all" = every labelled posting).
     ids = []
     for job_id, row in split.items():
-        if row["split"] == args.split:
+        if args.split == "all" or row["split"] == args.split:
             ids.append(job_id)
     ids.sort()
     if args.limit:                             # a small random sample, e.g. to try a prompt
@@ -472,6 +472,8 @@ def cmd_score(args):
         # A separate name, so RAG runs never overwrite the plain runs: the rows are keyed
         # by (job_id, model, prompt_version, effort, run).
         version += "--rag"
+        if args.pool == "all":
+            version += "-all"                  # e.g. "v5-2d1d54b2--rag-all"
 
     with connect() as conn:
         postings = load_postings(conn, ids)
@@ -480,7 +482,7 @@ def cmd_score(args):
         examples = {}
         if args.rag:
             import rag
-            examples = rag.examples_for_all(conn, postings, split)
+            examples = rag.examples_for_all(conn, postings, split, args.pool)
 
         print(f"{len(postings)} {args.split} postings, {args.model}, effort {args.effort}, "
               f"{version}, run {args.run}", flush=True)
@@ -510,7 +512,7 @@ def main():
     score_command.add_argument("--effort", default="medium", choices=["low", "medium", "high"])
     score_command.add_argument("--prompt", default=DEFAULT_PROMPT, help="file name in prompts/, without .txt")
     score_command.add_argument("--run", type=int, default=1, help="repeat index; keeps earlier runs")
-    score_command.add_argument("--split", default="train", choices=["train", "test"])
+    score_command.add_argument("--split", default="train", choices=["train", "test", "all"])
     score_command.add_argument("--limit", type=int)
     score_command.add_argument("--seed", type=int, default=42)
     score_command.add_argument("--batch", action="store_true", help="Batch API: half price, slower")
@@ -519,6 +521,9 @@ def main():
                                help="print the requests instead of sending them (no cost)")
     score_command.add_argument("--rag", action="store_true",
                                help="show the most similar labelled train postings as examples")
+    score_command.add_argument("--pool", default="train", choices=["train", "all"],
+                               help="with --rag: examples from the train set only, or from every "
+                                    "labelled posting except the one scored (leave-one-out)")
 
     args = parser.parse_args()
     if args.cmd == "split":

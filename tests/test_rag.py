@@ -79,3 +79,29 @@ def test_examples_come_only_from_the_train_set(monkeypatch):
     block = rag.examples_for(None, "te1", split)
     assert asked["candidates"] == ["tr1", "tr2"]          # the test posting is never a candidate
     assert "Example 1, his decision: talán\nTitle: Title tr2" in block
+
+
+# --- leave-one-out pool -------------------------------------------------------
+
+def test_pool_all_offers_every_labelled_posting(monkeypatch):
+    import embed
+    import llm_score
+
+    split = {"tr1": {"label": "nem", "split": "train"},
+             "te1": {"label": "jelentkeznék", "split": "test"},
+             "te2": {"label": "talán", "split": "test"}}
+    asked = {}
+
+    def fake_nearest(conn, job_id, candidates, k):
+        asked["candidates"] = list(candidates)
+        return [("te2", 0.95)]
+
+    def fake_load_postings(conn, ids):
+        return [{"id": i, "title": f"Title {i}", "description": "text"} for i in ids]
+
+    monkeypatch.setattr(embed, "nearest", fake_nearest)
+    monkeypatch.setattr(llm_score, "load_postings", fake_load_postings)
+    block = rag.examples_for(None, "te1", split, pool="all")
+    # every labelled posting is offered; nearest() itself leaves out te1
+    assert asked["candidates"] == ["te1", "te2", "tr1"]
+    assert "his decision: talán\nTitle: Title te2" in block

@@ -138,10 +138,72 @@ the ground truth is one person's decisions. The whole eval cost about 2 USD in
 API credits, mostly through the Batch API at half price. The scorer is not part
 of the daily run yet; the evening review still scores the postings.
 
+### Similar postings as examples (RAG)
+
+I was not that happy with the v5 result; I know the set is small, but I think the
+model could have done better, it just needed examples that resemble the posting it
+decides on.
+
+At first I only looked at my decisions on the nearest neighbours, and the result
+was voted from them. This was clearly not the best (51-59% agreement, about as
+much as answering *no* to everything), so later I gave the model the 5 nearest
+neighbours, so that it reads their descriptions too and decides based on them
+together with the rules.
+
+`scripts/rag.py` finds the neighbours among the tuning postings (local
+multilingual-e5-small embeddings in pgvector) and puts them, with my decision on
+each, in front of the posting. Held-back postings are never examples, and a
+neighbour with similarity 0.99 or higher is skipped, because it is the same
+posting posted again.
+
+Claude Haiku 5.5, prompt v5, mean of three runs; the held-back set with the
+corrected labels:
+
+| Set | Scorer | Agreement (range) | Recall on *would apply* (range) | Decisions that change between runs |
+|---|---|---|---|---|
+| Tuning (61) | v5 | 81% (79-82) | 61% (55-64) | 2 of 61 |
+| Tuning (61) | v5 + examples | 84% (84-84) | 79% (73-82) | 4 of 61 |
+| Held back (25) | v5 | 77% (76-80) | 50% | 3 of 25 |
+| Held back (25) | v5 + examples | 83% (80-84) | 67% (50-75) | 1 of 25 |
+| Held back (25) | v5, Claude Sonnet 5.5 | 83% (80-84) | 67% (50-75) | 2 of 25 |
+
+With the examples, Haiku's majority vote on the held-back set matched Sonnet's
+decision for decision, at about a tenth of the price per run.
+
+The held-back set had 4 *would apply* postings. Haiku with the examples did better
+than with the plain v5 prompt. That can be chance, but I saw a similar gain on the
+tuning set too, so chance is less likely.
+
+To check this on more postings, I scored all 86 labelled postings leave-one-out:
+any other labelled posting could be an example, the way it would run every day.
+Claude Haiku 5.5, all 86 postings (15 *would apply*), three runs:
+
+| Scorer | Agreement (range) | Recall on *would apply* (range) | Decisions that change between runs |
+|---|---|---|---|
+| v5 | 80% (79-80) | 58% (53-60) | 5 of 86 |
+| v5 + examples from the tuning postings | 84% (83-84) | 76% (73-80) | 5 of 86 |
+| v5 + examples from all labelled postings | 78% (77-78) | 47% | 10 of 86 |
+
+The two example rows differ only in which postings may be examples, and that alone
+moved five *would apply* postings to *maybe*. The earlier gain depended on which
+five examples happened to be picked.
+
+It surprised me, because I thought the postings scored as close to it would only
+strengthen the decision, but it turned out they do not. To me this also shows that
+I may not be showing the model the right examples, and that is what leads it
+astray, because the examples reinforce a rule. Later I will test it again on a
+larger set, and that will show whether the size of the set is the problem.
+
+The plain v5 prompt goes into the daily run. I want to refine RAG later, because I
+think this only shows up on a small set.
+
 ```bash
 python scripts/llm_score.py score --model claude-haiku-5-5 --prompt v5 --run 1 --batch
+python scripts/llm_score.py score --prompt v5 --rag --run 1 --batch   # with examples
+python scripts/llm_score.py score --prompt v5 --rag --pool all --split all --run 1 --batch  # leave-one-out
 python scripts/llm_eval.py                # tuning set: per run, mean, range, majority vote
 python scripts/llm_eval.py --split test   # held-back set, only for the final prompt
+python scripts/llm_eval.py --split all    # all labelled postings (leave-one-out runs)
 ```
 
 ## Repository layout
