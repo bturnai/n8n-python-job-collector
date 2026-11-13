@@ -143,3 +143,28 @@ def test_batch_waits_until_ended_then_stores_results(monkeypatch):
                           "RULES", "PROFILE", "v5-x", {})
     assert sleeps == [60, 60]           # asked three times, waited twice
     assert conn.statements[0][1][0] == "remoteok:1"   # stored under the real job id
+
+
+# --- the daily run -------------------------------------------------------------
+
+import llm_score  # noqa: E402
+
+
+def test_not_yet_scored_skips_the_scored_ones():
+    assert llm_score.not_yet_scored(["a", "b", "c"], ["b"]) == ["a", "c"]
+    assert llm_score.not_yet_scored(["a"], ["a"]) == []
+
+
+def test_daily_file_lists_scores_and_skipped_postings():
+    scores = {"3049577": ("nem", 3, ["3-5 év tapasztalat"])}
+    content = llm_score.daily_file("2026-11-14", "v5-x--daily", scores, ["3049577", "3049999"])
+    assert content == {
+        "datum": "2026-11-14", "prompt": "v5-x--daily", "hiba": None,
+        "allasok": [{"id": "3049577", "dontes": "nem", "pont": 3, "hianyzik": ["3-5 év tapasztalat"]}],
+        "kihagyva": ["3049999"]}
+
+
+def test_daily_file_after_an_error_keeps_the_error_text():
+    content = llm_score.daily_file("2026-11-14", "v5-x--daily", {}, ["a"], "APIConnectionError: down")
+    assert content["hiba"] == "APIConnectionError: down"
+    assert content["allasok"] == [] and content["kihagyva"] == ["a"]

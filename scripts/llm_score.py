@@ -5,11 +5,14 @@ What it does:
            prompt on) and a test set (scored once, at the end). Run once.
   score  - sends postings to Claude with the scoring prompt and stores each answer
            (decision, score, pros, cons, missing) in PostgreSQL.
+  score-new - the daily run: scores the newest day's postings (marts.mart_new_postings)
+           with the plain v5 prompt and writes llm_pontok_<day>.json for the evening review.
 
     python scripts/llm_score.py split                                   # once
     python scripts/llm_score.py score --model claude-haiku-5-5 --limit 10
     python scripts/llm_score.py score --prompt v5 --run 2 --batch       # repeat a run
     python scripts/llm_score.py score --prompt v5 --rag --batch         # with RAG examples
+    python scripts/llm_score.py score-new --out ../allasfigyelo         # every evening
 
 The comparison with the hand labels is in scripts/llm_eval.py.
 """
@@ -499,6 +502,117 @@ def cmd_score(args):
                        rubric, profile, version, examples)
 
 
+# --- The daily run ---------------------------------------------------------------------
+
+# The daily scores get their own version name, like the RAG runs: if a daily posting is
+# labelled later, its daily score must not count as an eval run.
+DAILY_SUFFIX = "--daily"
+DAILY_MODEL = "claude-haiku-5-5"
+DAILY_EFFORT = "medium"
+DAILY_RUN = 1
+
+
+def not_yet_scored(ids, scored_ids):
+    """The ids that have no daily score yet, in the same order.
+
+    Example: not_yet_scored(["a", "b", "c"], ["b"]) -> ["a", "c"]
+    If the evening review runs twice, the second run pays for nothing.
+    """
+    todo = []
+    for job_id in ids:
+        if job_id not in scored_ids:
+            todo.append(job_id)
+    return todo
+
+
+def daily_file(day, version, scores, ids, error=None):
+    """The content of llm_pontok_<day>.json, as a dict.
+
+    scores: {job_id: (decision, score, missing)} from raw.llm_scores
+    ids:    every posting of the day; the ones without a score go to "kihagyva"
+            (skipped: an invalid answer, or the run stopped before them)
+    error:  the error text if the run failed, otherwise None
+
+    Example:
+        {"datum": "2026-11-14", "prompt": "v5-2d1d54b2--daily", "hiba": None,
+         "allasok": [{"id": "3049577", "dontes": "nem", "pont": 3,
+                      "hianyzik": ["3-5 év tapasztalat"]}],
+         "kihagyva": []}
+    """
+    postings = []
+    skipped = []
+    for job_id in ids:
+        if job_id in scores:
+            decision, score, missing = scores[job_id]
+            postings.append({"id": job_id, "dontes": decision, "pont": score, "hianyzik": missing})
+        else:
+            skipped.append(job_id)
+    return {"datum": day, "prompt": version, "hiba": error, "allasok": postings, "kihagyva": skipped}
+
+
+def cmd_score_new(args):
+    """python scripts/llm_score.py score-new --out DIR: score the newest day's postings."""
+    import anthropic
+
+    load_env()
+    rubric, profile = system_prompt(DEFAULT_PROMPT)
+    version = prompt_version(DEFAULT_PROMPT, rubric, profile) + DAILY_SUFFIX
+    day = ""
+    ids = []
+    error = None
+
+    with connect() as conn:
+        try:
+            # Step 1: the newest day's postings (Budapest area or remote).
+            rows = conn.execute(
+                "select job_id, collected_on from marts.mart_new_postings order by job_id").fetchall()
+            for job_id, collected_on in rows:
+                ids.append(job_id)
+                day = str(collected_on)
+
+            # Step 2: the ones without a daily score yet.
+            scored_ids = []
+            for row in conn.execute(
+                    """select job_id from raw.llm_scores
+                       where model = %s and prompt_version = %s and effort = %s and run = %s
+                         and job_id = any(%s)""",
+                    (DAILY_MODEL, version, DAILY_EFFORT, DAILY_RUN, ids)).fetchall():
+                scored_ids.append(row[0])
+            todo = not_yet_scored(ids, scored_ids)
+            print(f"{day}: {len(ids)} new postings, {len(todo)} to score with {version}", flush=True)
+
+            # Step 3: score them one by one (direct calls: the evening review waits for this).
+            if len(todo) > 0:
+                client = anthropic.Anthropic()
+                score_sync(client, conn, load_postings(conn, todo), DAILY_MODEL, DAILY_EFFORT,
+                           DAILY_RUN, rubric, profile, version, {})
+        except Exception as problem:            # an API or database error: note it, go on
+            conn.rollback()
+            error = f"{type(problem).__name__}: {problem}"
+            print(f"scoring stopped: {error}", file=sys.stderr)
+
+        # Step 4: every daily score of these postings, also the ones from an earlier run.
+        scores = {}
+        if len(ids) > 0:
+            for job_id, decision, score, missing in conn.execute(
+                    """select job_id, decision, score, missing from raw.llm_scores
+                       where model = %s and prompt_version = %s and effort = %s and run = %s
+                         and job_id = any(%s)""",
+                    (DAILY_MODEL, version, DAILY_EFFORT, DAILY_RUN, ids)).fetchall():
+                scores[job_id] = (decision, score, missing)
+
+    # Step 5: the file the evening review reads. Written even after an error, so the
+    # review can say in the e-mail that there was no scoring today.
+    if day == "":
+        day = time.strftime("%Y-%m-%d")
+    content = daily_file(day, version, scores, ids, error)
+    path = pathlib.Path(args.out) / f"llm_pontok_{day}.json"
+    path.write_text(json.dumps(content, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"wrote {path.name}: {len(content['allasok'])} scored, {len(content['kihagyva'])} skipped")
+    if error:
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="cmd", required=True)
@@ -525,9 +639,14 @@ def main():
                                help="with --rag: examples from the train set only, or from every "
                                     "labelled posting except the one scored (leave-one-out)")
 
+    new_command = commands.add_parser("score-new")
+    new_command.add_argument("--out", required=True, help="folder of the daily files (allasfigyelo)")
+
     args = parser.parse_args()
     if args.cmd == "split":
         cmd_split(args)
+    elif args.cmd == "score-new":
+        cmd_score_new(args)
     else:
         cmd_score(args)
 

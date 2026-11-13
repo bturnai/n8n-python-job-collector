@@ -135,8 +135,10 @@ tuning.
 
 Limits: 25 held-back postings means one posting moves agreement by 4 points, and
 the ground truth is one person's decisions. The whole eval cost about 2 USD in
-API credits, mostly through the Batch API at half price. The scorer is not part
-of the daily run yet; the evening review still scores the postings.
+API credits, mostly through the Batch API at half price. Since 2026-11-14 the plain
+v5 prompt scores the newest postings every evening (`llm_score.py score-new`, run
+by `refresh_marts.sh`). The evening review still scores them too, and for two
+weeks both scores are kept, to compare them.
 
 ### Similar postings as examples (RAG)
 
