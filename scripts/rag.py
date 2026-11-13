@@ -14,8 +14,9 @@ Try it on one posting:   python scripts/rag.py <job_id>
 Score with it:           python scripts/llm_score.py score --prompt v5 --rag --run 1 --batch
 """
 
-# How much of each example's description the model sees: all of it, as the collector
-# stores at most 2200 characters. With 600, half of the train postings lost their
+# How much of each example's description the model sees. Until 2026-11-13 the
+# collector stored at most 2200 characters, so this was all of it; since then the
+# descriptions run to the end of the posting and this cuts the longer ones. With 600, half of the train postings lost their
 # requirements section (median start: character 621), and his decisions turn on it
 # (seniority, language, student job). Five full examples cost about 5 cents per
 # 61 postings x 3 runs on Haiku.

@@ -2,7 +2,8 @@
 
 Input: one item per selected job - the job card fields merged with the
 downloaded detail page (`data`). Output: the job card plus `techs` (the
-"required technologies" block) and `description` (the posting text, capped).
+"required technologies" block) and `description` (the posting text and its tags,
+up to where the posting ends on the page).
 """
 import re
 
@@ -12,13 +13,22 @@ from common import collapse_ws, js_index_of, js_slice, js_trim
 # passed on: the page HTML is large and only the extracted text is needed.
 HTTP_FIELDS = ["data", "body", "error"]
 
-# Length limits, so that the evening review does not get needlessly long text.
-DESCRIPTION_LIMIT = 2200
+# Length limits. The description is NOT cut at a fixed length any more (it was 2200
+# until 2026-11-13, and a quarter of the postings lost part of their requirements):
+# it ends where the posting ends on the page. 10000 is only a safety limit for a
+# page whose end marker is missing.
+DESCRIPTION_LIMIT = 10000
 TECHS_LIMIT = 300
 
 # Section headings on the job page. Some pages write them without accents.
 TECHS_HEADINGS = ["Elvart technologiak", "Elvárt technológiák"]
 DESCRIPTION_HEADINGS = ["Allas leirasa", "Állás leírása"]
+
+# Where the posting ends on the page. Before these come the posting and its tags
+# ("Teljes munkaidő", "Angol középfok", "Nem kell tapasztalat"); after them the
+# company profile, its ratings, similar jobs and the site footer.
+DESCRIPTION_END_MARKERS = ["Egyéb adatok és információk", "Egyeb adatok es informaciok",
+                           "Hasonló állások", "Hasonlo allasok"]
 
 
 def strip_html(html):
@@ -60,6 +70,20 @@ def find_first_heading(text, headings):
     return -1
 
 
+def find_end(text, markers):
+    """Position of the earliest end marker in the text, or -1 if none is there.
+
+    Example: find_end("posting ... Hasonló állások ... Egyéb adatok és információk", ...)
+    returns the position of "Hasonló állások", because it comes first.
+    """
+    earliest = -1
+    for marker in markers:
+        position = js_index_of(text, marker)
+        if position >= 0 and (earliest < 0 or position < earliest):
+            earliest = position
+    return earliest
+
+
 def get_page_html(fields):
     """The downloaded page is in `data`; some HTTP node versions use `body`."""
     if fields.get("data"):
@@ -89,11 +113,15 @@ def main(items):
         if start >= 0:
             techs = js_slice(text, start, start + TECHS_LIMIT)
 
-        # 4. The description: from its heading if found, otherwise the whole text.
+        # 4. The description: from its heading if found, otherwise the whole text,
+        #    up to where the posting ends on the page (then the safety limit).
         description = text
         start = find_first_heading(text, DESCRIPTION_HEADINGS)
         if start >= 0:
             description = js_slice(text, start)
+        end = find_end(description, DESCRIPTION_END_MARKERS)
+        if end > 0:
+            description = js_trim(js_slice(description, 0, end))
         description = js_slice(description, 0, DESCRIPTION_LIMIT)
         if description == "":
             description = "(nem sikerult kinyerni)"  # "could not extract"

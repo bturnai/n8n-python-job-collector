@@ -102,6 +102,26 @@ def test_extract_text_finds_sections_and_drops_http_fields():
     assert job["techs"] == "Elvárt technológiák SQL, Python"
 
 
+
+def test_extract_text_keeps_the_whole_posting_and_drops_the_page_footer():
+    # Before 2026-11-13 the description was cut at 2200 characters, which lost the
+    # requirements of long postings. Now it ends where the posting ends on the page.
+    requirements = "Elvárások " + "SQL és Python tapasztalat. " * 120     # about 3200 characters
+    html = ("<h2>Állás leírása</h2><p>Feladatok Riportok</p><p>" + requirements + "</p>"
+            "<p>Teljes munkaidő Angol középfok Nem kell tapasztalat</p>"
+            "<h2>Egyéb adatok és információk</h2><p>Cégprofil, értékelések</p>"
+            "<h2>Hasonló állások</h2><p>Másik állás</p>")
+    job = extract_text.main([{"json": {"id": "8", "data": html}}])[0]["json"]
+    assert len(job["description"]) > 2200
+    assert job["description"].endswith("Teljes munkaidő Angol középfok Nem kell tapasztalat")
+    assert "Cégprofil" not in job["description"]
+
+
+def test_extract_text_safety_limit_without_end_marker():
+    html = "<h2>Állás leírása</h2><p>" + "x" * 20000 + "</p>"
+    job = extract_text.main([{"json": {"id": "9", "data": html}}])[0]["json"]
+    assert len(job["description"]) == extract_text.DESCRIPTION_LIMIT
+
 # --- remote APIs ------------------------------------------------------------
 
 def api_item(source, body):

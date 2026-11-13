@@ -90,7 +90,17 @@ def test_extract_text(collector):
     _, run, _ = collector
     jobs = merge_by_position(outputs(run, "Uj allasok szurese"),
                              outputs(run, "Reszletes oldal letoltese"))
-    assert as_json(extract_text.main(jobs)) == as_json(outputs(run, "Hirdetes-szoveg kinyerese"))
+    new = extract_text.main(jobs)
+    recorded = outputs(run, "Hirdetes-szoveg kinyerese")
+    # Intended difference since 2026-11-13: the recorded (old) description is the first
+    # 2200 characters of the page text; the new one runs to the end of the posting.
+    # So one is always the start of the other, and everything else is identical.
+    assert len(new) == len(recorded)
+    for new_item, old_item in zip(new, recorded):
+        new_job, old_job = dict(new_item["json"]), dict(old_item["json"])
+        new_text, old_text = new_job.pop("description"), old_job.pop("description")
+        assert new_job == old_job
+        assert new_text.startswith(old_text) or old_text.startswith(new_text)
 
 
 def test_api_parse(collector):
