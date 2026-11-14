@@ -328,3 +328,49 @@ def test_real_mails_become_database_rows():
     # 14 data jobs in the four mails: 13 from Indeed, 1 from NoFluffJobs.
     assert len(rows) == 14
     assert sources == {"indeed", "nofluffjobs"}
+
+
+# --- The mail workflow (scripts/workflow_mail.py) ------------------------------
+
+def mail_workflow():
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+    import workflow_mail
+    return workflow_mail.build_workflow("/data/allasfigyelo/")
+
+
+def test_mail_workflow_routes_linkedin_and_the_other_alerts_apart():
+    workflow = mail_workflow()
+    split = workflow["connections"]["LinkedIn level?"]["main"]
+    assert split[0][0]["node"] == "Level kimentese"            # true: LinkedIn, as before
+    assert split[1][0]["node"] == "Ertesito level kimentese"   # false: NoFluffJobs, Indeed
+    paths = {}
+    for node in workflow["nodes"]:
+        if node["type"] == "n8n-nodes-base.readWriteFile":
+            paths[node["name"]] = node["parameters"]["fileName"]
+    assert paths["Fajl mentese"].startswith("=/data/allasfigyelo/linkedin/")
+    assert paths["Ertesito fajl mentese"].startswith("=/data/allasfigyelo/levelek/")
+
+
+def test_mail_workflow_watches_the_three_senders():
+    workflow = mail_workflow()
+    trigger = workflow["nodes"][0]
+    search = json.loads(trigger["parameters"]["options"]["customEmailConfig"])
+    assert search == ["UNSEEN", ["OR", ["FROM", "jobalerts-noreply@linkedin.com"],
+                                 ["OR", ["FROM", "notifications@nofluffjobs.com"],
+                                  ["FROM", "donotreply@jobalert.indeed.com"]]]]
+    # The LinkedIn nodes keep the ids of the original workflow.
+    ids = []
+    for node in workflow["nodes"]:
+        ids.append(node["id"])
+    assert {"imap0001", "licode01", "licnv01", "liwrt01"} <= set(ids)
+
+
+def test_renamed_trigger_keeps_its_place_in_the_mailbox():
+    import sync
+    published = {"nodes": [{"id": "imap0001", "name": "LinkedIn levelek figyelese"}],
+                 "staticData": {"node:LinkedIn levelek figyelese": {"lastMessageUid": 103628},
+                                "global": {"x": 1}}}
+    sync.keep_trigger_state(published, [{"id": "imap0001", "name": "Allasertesito levelek figyelese"}])
+    assert published["staticData"] == {"node:Allasertesito levelek figyelese": {"lastMessageUid": 103628},
+                                       "global": {"x": 1}}

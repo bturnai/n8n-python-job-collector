@@ -12,9 +12,7 @@ Usage:
   python scripts/sync.py push <workflow-id> [--from FILE]
       put the current code into the PUBLISHED version of a workflow and publish it.
       --from: use the nodes and connections of a generated workflow file instead
-      (scripts/workflow_collector.py). Restart n8n afterwards.
-      A workflow that does not exist yet is created from --from
-      (scripts/workflow_alert_mail.py).
+      (scripts/workflow_collector.py, scripts/workflow_mail.py). Restart n8n afterwards.
 """
 import ast
 import json
@@ -42,8 +40,8 @@ NODES = {
         "Riport osszeallitasa": "report",
         "Ertesito levelek feldolgozasa": "mail_parse",
     },
-    "linkedinmail0001": {"Level kimentese": "linkedin_mail"},
-    "ertesitomail0001": {"Ertesito level kimentese": "alert_mail"},
+    # Since 2026-11-14 also NoFluffJobs and Indeed alerts (scripts/workflow_mail.py).
+    "linkedinmail0001": {"Level kimentese": "linkedin_mail", "Ertesito level kimentese": "alert_mail"},
     "kerelem0000001": {"Kerelem rogzitese": "request_click"},
     "valaszmail00001": {"Kerelem mentese": "request_reply"},
     "emailkuldo00001": {"Csatolmanyok elokeszitese": "email_attachments"},
@@ -239,18 +237,24 @@ def published_workflow(workflow_id):
     }
 
 
-def workflow_exists(workflow_id):
-    connection = sqlite3.connect(f"file:{DATABASE}?mode=ro", uri=True)
-    row = connection.execute("select id from workflow_entity where id = ?", (workflow_id,)).fetchone()
-    return row is not None
+def keep_trigger_state(workflow, new_nodes):
+    """Carry a renamed node's saved state over to its new name.
 
-
-def new_workflow(source_file):
-    """A workflow to create: the generated file, with its folder and no saved state."""
-    generated = json.loads(pathlib.Path(source_file).read_text())[0]
-    generated.setdefault("staticData", None)
-    generated.setdefault("parentFolderId", None)
-    return generated
+    n8n stores a trigger's state under "node:<name>", e.g. the IMAP trigger's
+    {"lastMessageUid": 103628}: the last mail it has seen. If the node gets a new
+    name, the state would be lost and the trigger would fetch old unread mails
+    again. Nodes are matched by id, which does not change.
+    """
+    state = workflow.get("staticData")
+    if not state:
+        return
+    old_names = {}
+    for node in workflow["nodes"]:
+        old_names[node["id"]] = node["name"]
+    for node in new_nodes:
+        old_name = old_names.get(node["id"])
+        if old_name and old_name != node["name"] and f"node:{old_name}" in state:
+            state[f"node:{node['name']}"] = state.pop(f"node:{old_name}")
 
 
 def put_python_code(workflow):
@@ -280,12 +284,11 @@ def run_n8n(*args):
 def push(workflow_id, source_file=None):
     if check(sorted(set(NODES[workflow_id].values()))) != 0:
         return 1
-    if source_file and not workflow_exists(workflow_id):
-        workflow = new_workflow(source_file)
-    else:
-        workflow = published_workflow(workflow_id)
+    workflow = published_workflow(workflow_id)
     if source_file:
         generated = json.loads(pathlib.Path(source_file).read_text())[0]
+        keep_trigger_state(workflow, generated["nodes"])
+        workflow["name"] = generated["name"]
         workflow["nodes"] = generated["nodes"]
         workflow["connections"] = generated["connections"]
         workflow["settings"] = generated["settings"]
