@@ -476,6 +476,8 @@ def cmd_score(args):
         version += "--rag"
         if args.pool == "all":
             version += "-all"                  # e.g. "v5-2d1d54b2--rag-all"
+        if args.embedding == "profile":
+            version += "-profile"              # e.g. "v5-2d1d54b2--rag-all-profile"
 
     with connect() as conn:
         postings = load_postings(conn, ids)
@@ -484,7 +486,7 @@ def cmd_score(args):
         examples = {}
         if args.rag:
             import rag
-            examples = rag.examples_for_all(conn, postings, split, args.pool)
+            examples = rag.examples_for_all(conn, postings, split, args.pool, args.embedding)
 
         print(f"{len(postings)} {args.split} postings, {args.model}, effort {args.effort}, "
               f"{version}, run {args.run}", flush=True)
@@ -637,6 +639,9 @@ def main():
     score_command.add_argument("--pool", default="train", choices=["train", "all"],
                                help="with --rag: examples from the train set only, or from every "
                                     "labelled posting except the one scored (leave-one-out)")
+    score_command.add_argument("--embedding", default="text", choices=["text", "profile"],
+                               help="with --rag: find the neighbours by the whole text or by the "
+                                    "Claude profile (scripts/posting_profile.py)")
 
     new_command = commands.add_parser("score-new")
     new_command.add_argument("--out", required=True, help="folder of the daily files (allasfigyelo)")

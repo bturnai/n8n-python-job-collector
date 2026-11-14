@@ -67,7 +67,7 @@ def test_examples_come_only_from_the_train_set(monkeypatch):
              "te1": {"label": "jelentkeznék", "split": "test"}}
     asked = {}
 
-    def fake_nearest(conn, job_id, candidates, k):
+    def fake_nearest(conn, job_id, candidates, k, key=None):
         asked["candidates"] = sorted(candidates)
         return [("tr2", 0.95), ("tr1", 0.93)]
 
@@ -92,7 +92,7 @@ def test_pool_all_offers_every_labelled_posting(monkeypatch):
              "te2": {"label": "talán", "split": "test"}}
     asked = {}
 
-    def fake_nearest(conn, job_id, candidates, k):
+    def fake_nearest(conn, job_id, candidates, k, key=None):
         asked["candidates"] = list(candidates)
         return [("te2", 0.95)]
 
@@ -105,3 +105,21 @@ def test_pool_all_offers_every_labelled_posting(monkeypatch):
     # every labelled posting is offered; nearest() itself leaves out te1
     assert asked["candidates"] == ["te1", "te2", "tr1"]
     assert "his decision: talán\nTitle: Title te2" in block
+
+
+def test_profile_embedding_is_used_for_the_neighbours(monkeypatch):
+    import embed
+    import llm_score
+
+    split = {"tr1": {"label": "nem", "split": "train"}, "te1": {"label": "talán", "split": "test"}}
+    asked = {}
+
+    def fake_nearest(conn, job_id, candidates, k, key=None):
+        asked["key"] = key
+        return [("tr1", 0.9)]
+
+    monkeypatch.setattr(embed, "nearest", fake_nearest)
+    monkeypatch.setattr(llm_score, "load_postings",
+                        lambda conn, ids: [{"id": i, "title": "T", "description": "d"} for i in ids])
+    rag.examples_for(None, "te1", split, embedding="profile")
+    assert asked["key"] == embed.PROFILE_KEY

@@ -126,7 +126,7 @@ def labelled_candidates(split):
     return ids
 
 
-def examples_for(conn, job_id, split, pool="train"):
+def examples_for(conn, job_id, split, pool="train", embedding="text"):
     """The examples block for one posting, ready to put into the prompt.
 
     conn:  the database connection
@@ -134,8 +134,11 @@ def examples_for(conn, job_id, split, pool="train"):
            {"3038067": {"label": "talán", "split": "train"}, ...}
     pool:  "train" - examples only from the train set (the train/test eval)
            "all"   - examples from every labelled posting (leave-one-out, daily use)
+    embedding: how "similar" is measured. "text" - embeddings of the whole posting text;
+           "profile" - embeddings of the Claude profiles (scripts/posting_profile.py).
+           Only the choice of neighbours changes; the examples shown are the same kind.
     """
-    from embed import nearest
+    from embed import MODEL, PROFILE_KEY, nearest
     from llm_score import load_postings
 
     # Step 1: the postings the examples may come from.
@@ -146,7 +149,10 @@ def examples_for(conn, job_id, split, pool="train"):
 
     # Step 2: the most similar candidates, from the database. We ask for a few more
     # than K, in case some are skipped as near-duplicates in step 3.
-    neighbours = nearest(conn, job_id, candidates, K + 5)
+    key = MODEL
+    if embedding == "profile":
+        key = PROFILE_KEY
+    neighbours = nearest(conn, job_id, candidates, K + 5, key)
 
     # Step 3: the ones we show.
     chosen_ids = pick_examples(neighbours, K)
@@ -165,11 +171,11 @@ def examples_for(conn, job_id, split, pool="train"):
     return format_examples(examples)
 
 
-def examples_for_all(conn, postings, split, pool="train"):
+def examples_for_all(conn, postings, split, pool="train", embedding="text"):
     """The examples block for every posting to score, by job_id."""
     blocks = {}
     for posting in postings:
-        blocks[posting["id"]] = examples_for(conn, posting["id"], split, pool)
+        blocks[posting["id"]] = examples_for(conn, posting["id"], split, pool, embedding)
     return blocks
 
 
