@@ -5,36 +5,12 @@ The IMAP trigger does not mark mails as read, so it re-delivers them after every
 restart. The file name is therefore derived from the mail's content: the same
 mail always maps to the same name and is overwritten instead of duplicated.
 """
-from common import day_str, js_hash, js_slice, js_str, now_local, to_json
+from common import day_str, js_hash, js_slice, js_str, mail_html, now_local, sender_address, to_json
 
 # Length limits for the stored parts of the mail.
 FINGERPRINT_TEXT_LENGTH = 2000
 TEXT_LIMIT = 20000
 HTML_LIMIT = 60000
-
-
-def sender_address(sender):
-    """The sender's e-mail address from the IMAP node's "from" field.
-
-    The field usually looks like {"value": [{"address": "jobs@linkedin.com"}], "text": "..."}.
-    """
-    if not isinstance(sender, dict):
-        return js_str(sender)
-
-    addresses = sender.get("value") or []
-    if len(addresses) > 0 and isinstance(addresses[0], dict) and addresses[0].get("address"):
-        return addresses[0]["address"]
-    if sender.get("text"):
-        return sender["text"]
-    # The original JavaScript printed an unknown object like this; kept for identical output.
-    return "[object Object]"
-
-
-def mail_html(mail):
-    """The HTML version of the mail; the IMAP node calls it textHtml or html."""
-    if mail.get("textHtml"):
-        return js_str(mail["textHtml"])
-    return js_str(mail.get("html"))
 
 
 def main(items, now=None):

@@ -74,6 +74,7 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
     in two months only one of their postings reached the shortlist."""
     data_dir = data_dir.rstrip("/")
     state_path = f"{data_dir}/allapot/latott.json"
+    alert_dir = f"{data_dir}/levelek"
     nodes = [
         {"name": "Kezi inditas", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1,
          "position": [-448, 208], "parameters": {}},
@@ -108,6 +109,19 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
                    f"={data_dir}/{{{{ $('Riport osszeallitasa').item.json.jsonFilename }}}}"),
         to_text_node("Latott-lista alakitas", 2688, 448, "latottTartalom", "latott.json"),
         write_node("Latott-lista mentese", 2912, 448, state_path),
+        # NoFluffJobs and Indeed alert e-mails, saved by the alert-mail workflow
+        # (alert_mail.py). An empty folder still lets the run go on: both file
+        # nodes always pass on an item, and mail_parse.py skips it.
+        {"name": "Ertesito levelek beolvasasa", "type": "n8n-nodes-base.readWriteFile",
+         "typeVersion": 1.1, "position": [0, 864], "alwaysOutputData": True,
+         "parameters": {"fileSelector": f"{alert_dir}/*.json", "options": {}}},
+        {"name": "Ertesito levelek JSON", "type": "n8n-nodes-base.extractFromFile",
+         "typeVersion": 1.1, "position": [224, 864], "alwaysOutputData": True,
+         "onError": "continueRegularOutput",
+         "parameters": {"operation": "fromJson", "options": {}}},
+        merge_node("Levelek + latott-lista", 672, 864, by_position=False),
+        python_node("Ertesito levelek feldolgozasa", "mail_parse", 896, 864),
+        merge_node("Profession + levelek", 1792, 0, by_position=False),
     ]
     if remote_apis:
         nodes += [
@@ -119,7 +133,7 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
             python_node("API talalatok feldolgozasa", "api_parse", 896, 432),
             merge_node("Forrasok egyesitese", 1792, 224, by_position=False),
         ]
-    starts = ["Keresesi URL-ek", "Latott-lista beolvasasa"] + (["Remote API URL-ek"] if remote_apis else [])
+    starts = ["Keresesi URL-ek", "Latott-lista beolvasasa", "Ertesito levelek beolvasasa"] + (["Remote API URL-ek"] if remote_apis else [])
     triggers = ["Kezi inditas", "Webhook inditas"]
     if schedule:
         nodes.insert(0, {"name": "Minden nap 21:30", "type": "n8n-nodes-base.scheduleTrigger",
@@ -151,10 +165,16 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
         ("JSON alakitas", "JSON mentese", 0),
         ("Riport osszeallitasa", "Latott-lista alakitas", 0),
         ("Latott-lista alakitas", "Latott-lista mentese", 0),
+        ("Ertesito levelek beolvasasa", "Ertesito levelek JSON", 0),
+        ("Latott-lista JSON", "Levelek + latott-lista", 0),
+        ("Ertesito levelek JSON", "Levelek + latott-lista", 1),
+        ("Levelek + latott-lista", "Ertesito levelek feldolgozasa", 0),
+        ("Hirdetes-szoveg kinyerese", "Profession + levelek", 0),
+        ("Ertesito levelek feldolgozasa", "Profession + levelek", 1),
     ]
     if remote_apis:
         links += [
-            ("Hirdetes-szoveg kinyerese", "Forrasok egyesitese", 0),
+            ("Profession + levelek", "Forrasok egyesitese", 0),
             ("Remote API URL-ek", "Remote API-k letoltese", 0),
             ("Remote API URL-ek", "API-k + forrasok", 0),
             ("Remote API-k letoltese", "API-k + forrasok", 1),
@@ -165,14 +185,16 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
             ("Forrasok egyesitese", "Duplikatumok kiszurese", 0),
         ]
     else:
-        links.append(("Hirdetes-szoveg kinyerese", "Duplikatumok kiszurese", 0))
+        links.append(("Profession + levelek", "Duplikatumok kiszurese", 0))
     connections = {}
     for source, target, index in links:
         outputs = connections.setdefault(source, {"main": [[]]})["main"][0]
         outputs.append({"node": target, "type": "main", "index": index})
 
     return {"id": wf_id, "name": name, "active": False, "nodes": nodes,
-            "connections": connections, "settings": {"executionOrder": "v1"}}
+            "connections": connections,
+            # binaryMode: the published workflow has it; without it the pushed version lost it.
+            "settings": {"executionOrder": "v1", "binaryMode": "separate"}}
 
 
 def main(argv):

@@ -20,3 +20,4 @@ eval/
 .vscode/
 # Practice exercises for learning the code: local only.
 gyakorlas/
+tests/fixtures/levelek/

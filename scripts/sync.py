@@ -13,6 +13,8 @@ Usage:
       put the current code into the PUBLISHED version of a workflow and publish it.
       --from: use the nodes and connections of a generated workflow file instead
       (scripts/workflow_collector.py). Restart n8n afterwards.
+      A workflow that does not exist yet is created from --from
+      (scripts/workflow_alert_mail.py).
 """
 import ast
 import json
@@ -38,8 +40,10 @@ NODES = {
         "Hirdetes-szoveg kinyerese": "extract_text",
         "Duplikatumok kiszurese": "dedupe",
         "Riport osszeallitasa": "report",
+        "Ertesito levelek feldolgozasa": "mail_parse",
     },
     "linkedinmail0001": {"Level kimentese": "linkedin_mail"},
+    "ertesitomail0001": {"Ertesito level kimentese": "alert_mail"},
     "kerelem0000001": {"Kerelem rogzitese": "request_click"},
     "valaszmail00001": {"Kerelem mentese": "request_reply"},
     "emailkuldo00001": {"Csatolmanyok elokeszitese": "email_attachments"},
@@ -152,6 +156,12 @@ SAMPLES = {
     "report": [STATE, {"json": {"id": "1", "company": "A", "title": "Data Analyst"}}],
     "linkedin_mail": [{"json": {"subject": "Állásajánlat 😀", "text": "x", "date": "2026-10-17",
                                 "from": {"value": [{"address": "jobs@example.com"}]}}}],
+    "alert_mail": [{"json": {"subject": "2 új állásajánlat", "text": "x", "date": "2026-11-14",
+                             "from": {"value": [{"address": "notifications@nofluffjobs.com"}]}}}],
+    "mail_parse": [STATE, {"json": {"data": {"forras": "indeed", "szoveg": (
+        "Data Engineer\nSanofi - Budapest\nSQL &amp; Python\nMost adták fel\n"
+        "https://hu.indeed.com/rc/clk/dl?jk=03692789080e0ec7&from=ja")}}},
+                   {"json": {"data": {"forras": "nofluffjobs", "html": "&amp; <b>x</b>"}}}],
     "request_click": [{"json": {"query": {"id": "123", "cim": "Data Analyst", "ceg": "Acme"}}}],
     "request_reply": [{"json": {"subject": "Re: x", "text": "Ezt kerem", "date": "2026-10-17"}}],
     "email_attachments": [{"json": {"body": {"to": "a@example.com", "subject": "s", "html": "<p>x</p>",
@@ -229,6 +239,20 @@ def published_workflow(workflow_id):
     }
 
 
+def workflow_exists(workflow_id):
+    connection = sqlite3.connect(f"file:{DATABASE}?mode=ro", uri=True)
+    row = connection.execute("select id from workflow_entity where id = ?", (workflow_id,)).fetchone()
+    return row is not None
+
+
+def new_workflow(source_file):
+    """A workflow to create: the generated file, with its folder and no saved state."""
+    generated = json.loads(pathlib.Path(source_file).read_text())[0]
+    generated.setdefault("staticData", None)
+    generated.setdefault("parentFolderId", None)
+    return generated
+
+
 def put_python_code(workflow):
     """Replace the code of every mapped node with the current code from nodes/."""
     modules = NODES[workflow["id"]]
@@ -256,7 +280,10 @@ def run_n8n(*args):
 def push(workflow_id, source_file=None):
     if check(sorted(set(NODES[workflow_id].values()))) != 0:
         return 1
-    workflow = published_workflow(workflow_id)
+    if source_file and not workflow_exists(workflow_id):
+        workflow = new_workflow(source_file)
+    else:
+        workflow = published_workflow(workflow_id)
     if source_file:
         generated = json.loads(pathlib.Path(source_file).read_text())[0]
         workflow["nodes"] = generated["nodes"]

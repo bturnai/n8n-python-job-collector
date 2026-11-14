@@ -14,7 +14,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ["profession.hu", "arbeitnow", "remoteok", "remotive"]
+                values: ["profession.hu", "arbeitnow", "remoteok", "remotive", "nofluffjobs", "indeed"]
       - name: title
         data_tests:
           - not_null

@@ -263,3 +263,31 @@ def split_state(items):
         else:
             other_items.append(item)
     return state, other_items
+
+
+# ---------------------------------------------------------------------------
+# E-mails from the IMAP trigger
+# ---------------------------------------------------------------------------
+
+def sender_address(sender):
+    """The sender's e-mail address from the IMAP node's "from" field.
+
+    The field usually looks like {"value": [{"address": "jobs@linkedin.com"}], "text": "..."}.
+    """
+    if not isinstance(sender, dict):
+        return js_str(sender)
+
+    addresses = sender.get("value") or []
+    if len(addresses) > 0 and isinstance(addresses[0], dict) and addresses[0].get("address"):
+        return addresses[0]["address"]
+    if sender.get("text"):
+        return sender["text"]
+    # The original JavaScript printed an unknown object like this; kept for identical output.
+    return "[object Object]"
+
+
+def mail_html(mail):
+    """The HTML version of the mail; the IMAP node calls it textHtml or html."""
+    if mail.get("textHtml"):
+        return js_str(mail["textHtml"])
+    return js_str(mail.get("html"))
