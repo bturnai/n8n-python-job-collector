@@ -109,11 +109,13 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
                    f"={data_dir}/{{{{ $('Riport osszeallitasa').item.json.jsonFilename }}}}"),
         to_text_node("Latott-lista alakitas", 2688, 448, "latottTartalom", "latott.json"),
         write_node("Latott-lista mentese", 2912, 448, state_path),
-        # NoFluffJobs and Indeed alert e-mails, saved by the alert-mail workflow
-        # (alert_mail.py). An empty folder still lets the run go on: both file
-        # nodes always pass on an item, and mail_parse.py skips it.
+        # NoFluffJobs and Indeed alert e-mails, saved by the mail workflow
+        # (alert_mail.py). An empty folder must not stop the run: the read node
+        # then fails with "No file(s) found" (tested 2026-11-14), so both file
+        # nodes go on with an error item, and mail_parse.py skips it.
         {"name": "Ertesito levelek beolvasasa", "type": "n8n-nodes-base.readWriteFile",
          "typeVersion": 1.1, "position": [0, 864], "alwaysOutputData": True,
+         "onError": "continueRegularOutput",
          "parameters": {"fileSelector": f"{alert_dir}/*.json", "options": {}}},
         {"name": "Ertesito levelek JSON", "type": "n8n-nodes-base.extractFromFile",
          "typeVersion": 1.1, "position": [224, 864], "alwaysOutputData": True,
