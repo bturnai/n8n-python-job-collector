@@ -1,8 +1,8 @@
 # n8n job collector with Python Code nodes
 
 A daily job-collection pipeline: n8n schedules the run, downloads job listings
-from profession.hu, and writes a de-duplicated JSON list for a later
-review step. Every transformation step is a **Python** Code node, running in
+from profession.hu, reads the NoFluffJobs and Indeed job-alert e-mails, and
+writes a de-duplicated JSON list for a later review step. Every transformation step is a **Python** Code node, running in
 n8n's native Python task runner inside Docker.
 
 The Python nodes replaced a working JavaScript version in October 2026. Before
@@ -49,10 +49,19 @@ per job; NoFluffJobs sends only HTML, and its job links go through a click
 counter whose real address is base64-encoded (decoded by hand: the sandbox has
 no `base64` module). The stored links carry no personal tracking codes. The
 alerts hold no full posting text, so these rows have a snippet (Indeed) or no
-description (NoFluffJobs).
+description (NoFluffJobs). A job that also appears on profession.hu is kept
+once, with profession.hu's full text.
 
-Separate small workflows store LinkedIn job-alert e-mails (`linkedin_mail.py`)
-and application requests from a one-click e-mail button or an e-mail reply
+The saved mails stay in the folder and are read again every evening; the
+seen-list skips what was already collected. One thing showed up only in a test
+run inside n8n: on an empty folder the Read Files node does not return zero
+items but fails with "No file(s) found", and that stopped the whole run,
+profession.hu included. The node now continues on error, and the parser skips
+the error item.
+
+LinkedIn alerts are not parsed into rows: a separate evening review reads them
+and checks the companies' own career pages. Other small workflows store
+application requests from a one-click e-mail button or an e-mail reply
 (`request_click.py`, `request_reply.py`). The e-mail sender workflow turns
 optional base64 attachments into n8n binary data (`email_attachments.py`).
 
@@ -228,6 +237,7 @@ scripts/
   sync.py                build the node code; `check` validates and runs every node in the
                          runner sandbox; `push` loads the code into the published workflow
   workflow_collector.py  generates the collector workflow JSON
+  workflow_mail.py       generates the job-alert mail workflow JSON
   extract_fixtures.py    pulls real node inputs/outputs from stored n8n executions
   make_label_sample.py   draws the hand-labelling sheet for the LLM eval
   llm_score.py           scores postings with Claude (direct calls or Batch API)
@@ -253,7 +263,10 @@ python scripts/sync.py check  # sandbox: static analysis, then a real run of eac
 - **Parity tests** feed each Python node the exact input its JavaScript
   predecessor received in production runs, and expect the same output. The
   recorded data contains scraped listings and e-mails, so it stays local
-  (`tests/fixtures/real/`, git-ignored).
+  (`tests/fixtures/real/`, git-ignored). The same goes for the real
+  NoFluffJobs and Indeed alerts (`tests/fixtures/levelek/*.eml`): their
+  links carry personal tracking codes. The committed tests use rows cut
+  from those mails.
 - **Sandbox check:** the sandbox's static analyzer misses things that fail only
   at run time, such as `strftime()` importing `time`. So `check` also executes
   every node in the runner container the way the runner does.
