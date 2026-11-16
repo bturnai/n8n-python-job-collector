@@ -242,6 +242,7 @@ scripts/
   make_label_sample.py   draws the hand-labelling sheet for the LLM eval
   llm_score.py           scores postings with Claude (direct calls or Batch API)
   llm_eval.py            compares stored verdicts with the hand labels
+  export_review.py       writes the evening review's daily list from the mart (all sources)
   embed.py               embeds postings locally (multilingual-e5-small) into pgvector
   rag.py                 picks the most similar labelled train postings as examples
 prompts/    the scoring prompt, one file per version
