@@ -52,6 +52,12 @@ def to_review_job(job):
         "forras": job.get("forras") or "profession.hu",
         "techs": job.get("techs") or "",
         "description": job.get("description") or "",
+        # The posting's sections and tags (extract_text.py); [] for other sources.
+        "requirements": job.get("requirements") or [],
+        "tasks": job.get("tasks") or [],
+        "nice_to_have": job.get("nice_to_have") or [],
+        "offer": job.get("offer") or [],
+        "tags": job.get("tags") or [],
     }
 
 

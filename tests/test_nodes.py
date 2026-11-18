@@ -90,14 +90,59 @@ def test_filter_new_returns_marker_when_nothing_is_new():
         "totalCards": 1, "unique": 1, "fresh": 0, "selected": 0}}}]
 
 
-def test_extract_text_finds_sections_and_drops_http_fields():
+def test_extract_text_finds_the_description_and_drops_http_fields():
     html = ("<html><script>var x=1;</script><h2>Állás leírása</h2><p>Riportok&nbsp;készítése</p>"
-            "<h3>Elvárt technológiák</h3><p>SQL, Python</p></html>")
+            "</html>")
     item = {"json": {"id": "7", "title": "Data Analyst", "data": html, "error": None}}
     job = extract_text.main([item])[0]["json"]
     assert "data" not in job and "error" not in job
     assert job["description"].startswith("Állás leírása Riportok készítése")
-    assert job["techs"] == "Elvárt technológiák SQL, Python"
+
+
+# The structure of a real profession.hu page (3029414 and 3030341, shortened): the
+# visible headings are free text, the itemprop markers under them are fixed.
+PAGE = (
+    '<section><h2>Állás leírása</h2>'
+    '<div id="box_fobb-feladatok-munkak" class="box-container"><h2><span class="title">'
+    'What You would do at KPMG:</span></h2><div id="tasks" itemprop="tasks">'
+    '<ul><li>source-to-target mapping</li><li>data cleansing &amp; reconciliation</li></ul>'
+    '</div></div>'
+    '<div id="box_az-allashoz-tartozo-elvarasok" class="box"><h3> Requirements </h3>'
+    '<div id="requirements" itemprop="requirements">'
+    '• Secondary school certificate<br/>• Minimum of 2 years’ experience </div></div>'
+    '<div id="box_amit-kinalunk" class="box"><h3>Amit kínálunk</h3>'
+    '<div id="offer" itemprop="offer"><div><p>Hibrid munkavégzés</p></div></div></div>'
+    '<li class="sr-only"><h3> Elvárt technológiák </h3><ul><li> SQL PYTHON </li></ul></li>'
+    '<li class="sr-only"><h3> Elvárások </h3><ul><li> Angol középfok </li>'
+    '<li> 3-5 év tapasztalat </li><li> Főiskola </li></ul></li></section>'
+    '<div class="my-auto techStacks"> <span class="bullet-wrapper">SQL</span>'
+    ' <span class="bullet-wrapper">PYTHON</span> </div>'
+    '<h2>Egyéb adatok és információk</h2>'
+)
+
+
+def test_extract_text_reads_the_sections_by_their_marker_not_their_heading():
+    job = extract_text.main([{"json": {"id": "1", "data": PAGE}}])[0]["json"]
+    assert job["tasks"] == ["source-to-target mapping", "data cleansing & reconciliation"]
+    # line breaks and typed bullets instead of a list
+    assert job["requirements"] == ["Secondary school certificate", "Minimum of 2 years’ experience"]
+    # a paragraph inside an extra <div>
+    assert job["offer"] == ["Hibrid munkavégzés"]
+    # a section the page does not have
+    assert job["nice_to_have"] == []
+
+
+def test_extract_text_reads_the_tags_without_a_length_limit():
+    job = extract_text.main([{"json": {"id": "1", "data": PAGE}}])[0]["json"]
+    assert job["techs"] == "SQL, PYTHON"
+    assert job["tags"] == ["Angol középfok", "3-5 év tapasztalat", "Főiskola"]
+
+
+def test_extract_text_without_sections_gives_empty_fields():
+    job = extract_text.main([{"json": {"__empty": True}}])[0]["json"]
+    assert job["techs"] == ""
+    for field in ["requirements", "tasks", "nice_to_have", "offer", "tags"]:
+        assert job[field] == []
 
 
 
@@ -136,6 +181,7 @@ def test_report_lists_jobs_unscored_and_extends_state():
     listing = json.loads(out["jsonTartalom"])
     assert out["jsonFilename"] == "allasok_2026-10-17.json"
     assert listing["atnezett"] == 1 and listing["allasok"][0]["score"] is None
+    assert listing["allasok"][0]["requirements"] == []      # no sections: empty list
     assert json.loads(out["latottTartalom"]) == {"seenIds": ["1", "9"], "seenKeys": ["a|x", "b|data analyst"]}
 
 

@@ -85,19 +85,31 @@ def test_filter_new(collector):
     assert as_json(result) == as_json(outputs(run, "Uj allasok szurese"))
 
 
+# The fields extract_text.py adds since 2026-11-18 (lists).
+NEW_FIELDS = ["requirements", "tasks", "nice_to_have", "offer", "tags"]
+
+
 def test_extract_text(collector):
     _, run, _ = collector
     jobs = merge_by_position(outputs(run, "Uj allasok szurese"),
                              outputs(run, "Reszletes oldal letoltese"))
     new = extract_text.main(jobs)
     recorded = outputs(run, "Hirdetes-szoveg kinyerese")
-    # Intended difference since 2026-11-13: the recorded (old) description is the first
-    # 2200 characters of the page text; the new one runs to the end of the posting.
-    # So one is always the start of the other, and everything else is identical.
+    # Intended differences:
+    # - since 2026-11-13 the recorded (old) description is the first 2200 characters of
+    #   the page text; the new one runs to the end of the posting. So one is always the
+    #   start of the other.
+    # - since 2026-11-18 `techs` holds profession.hu's tags ("PYTHON, SQL") instead of
+    #   300 characters of text, and the sections and tags are new fields.
+    # The job card fields are identical.
     assert len(new) == len(recorded)
     for new_item, old_item in zip(new, recorded):
         new_job, old_job = dict(new_item["json"]), dict(old_item["json"])
         new_text, old_text = new_job.pop("description"), old_job.pop("description")
+        new_job.pop("techs")
+        old_job.pop("techs")
+        for field in NEW_FIELDS:
+            assert isinstance(new_job.pop(field), list)
         assert new_job == old_job
         assert new_text.startswith(old_text) or old_text.startswith(new_text)
 
@@ -122,9 +134,13 @@ def test_report(collector):
     # Intentional difference (2026-11-10): the list also reports the page
     # statistics and alerts. Remove them before comparing with the original.
     # (The recorded input comes from the old dedupe, which dropped the statistics.)
+    # Intentional difference (2026-11-18): every job also has the section fields.
     listing = json.loads(result["jsonTartalom"])
     listing.pop("riasztasok")
     listing.pop("forrasok")
+    for job in listing["allasok"]:
+        for field in NEW_FIELDS:
+            job.pop(field)
     result["jsonTartalom"] = report.to_json(listing)
     result["markdown"] = result["markdown"].split("\n**Riasztas:**")[0]
     assert result == expected

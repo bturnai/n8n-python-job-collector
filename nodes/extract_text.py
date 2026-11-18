@@ -1,28 +1,42 @@
 """Node "Hirdetes-szoveg kinyerese": plain text from a profession.hu job page.
 
 Input: one item per selected job - the job card fields merged with the
-downloaded detail page (`data`). Output: the job card plus `techs` (the
-"required technologies" block) and `description` (the posting text and its tags,
-up to where the posting ends on the page).
+downloaded detail page (`data`). Output: the job card plus
+- `description`: the posting text and its tags, up to where the posting ends;
+- `requirements`, `tasks`, `nice_to_have`, `offer`: the posting's sections, as lists;
+- `tags`: profession.hu's own requirement tags (language, experience, education);
+- `techs`: profession.hu's technology tags, e.g. "PYTHON, SQL, GIT".
 """
+import html
 import re
 
-from common import collapse_ws, js_index_of, js_slice, js_trim
-
-# Fields that come from the HTTP download, not from the job card. They are not
-# passed on: the page HTML is large and only the extracted text is needed.
 HTTP_FIELDS = ["data", "body", "error"]
-
-# Length limits. The description is NOT cut at a fixed length any more (it was 2200
-# until 2026-11-13, and a quarter of the postings lost part of their requirements):
-# it ends where the posting ends on the page. 10000 is only a safety limit for a
-# page whose end marker is missing.
 DESCRIPTION_LIMIT = 10000
-TECHS_LIMIT = 300
 
-# Section headings on the job page. Some pages write them without accents.
-TECHS_HEADINGS = ["Elvart technologiak", "Elvárt technológiák"]
 DESCRIPTION_HEADINGS = ["Allas leirasa", "Állás leírása"]
+
+# The sections of the posting. The visible heading is free text that the company
+# writes ("Requirements", "Elvárások", "What You Will Bring:", ... 16 kinds in 124
+# postings), but the HTML under it carries a fixed marker, the same on every page:
+#     <div id="requirements" itemprop="requirements"> ... </div>
+# So the sections are found by this marker, not by the heading.
+SECTIONS = {
+    "requirements": "requirements",   # output field: itemprop on the page
+    "tasks": "tasks",
+    "nice_to_have": "other",
+    "offer": "offer",
+}
+
+# A section ends where the next one starts, or where the tag lists below the
+# posting start (whichever comes first).
+SECTION_END_MARKERS = ['<div id="box_', '<li class="sr-only">', "</section>", "<script"]
+
+# Tags that end a line when the HTML is turned into lines: list items, line breaks,
+# paragraphs, headings and blocks.
+LINE_BREAK_TAG = re.compile(r"</?(li|br|p|h[1-6]|div|tr)\b[^>]*>", re.IGNORECASE)
+ANY_TAG = re.compile(r"<[^>]+>")
+# Bullet characters some companies type at the start of a line: "• SQL", "- SQL".
+BULLET_AT_START = re.compile(r"^[•·▪◦‣●○■□➢►\-*–]+\s*")
 
 # Where the posting ends on the page. Before these come the posting and its tags
 # ("Teljes munkaidő", "Angol középfok", "Nem kell tapasztalat"); after them the
@@ -48,7 +62,6 @@ def strip_html(html):
     text = re.sub(r"<[^>]+>", " ", text)
 
     # Turn the common HTML entities back into characters.
-    # The order matches the original version, so the output stays identical.
     text = text.replace("&nbsp;", " ")
     text = text.replace("&amp;", "&")
     text = text.replace("&quot;", '"')
@@ -58,13 +71,14 @@ def strip_html(html):
     text = text.replace("&gt;", ">")
 
     # Collapse every run of whitespace into a single space, then trim the ends.
-    return js_trim(collapse_ws(text))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def find_first_heading(text, headings):
     """Position of the first heading found in the text, or -1 if none is there."""
     for heading in headings:
-        position = js_index_of(text, heading)
+        position = text.find(heading)
         if position >= 0:
             return position
     return -1
@@ -78,10 +92,76 @@ def find_end(text, markers):
     """
     earliest = -1
     for marker in markers:
-        position = js_index_of(text, marker)
+        position = text.find(marker)
         if position >= 0 and (earliest < 0 or position < earliest):
             earliest = position
     return earliest
+
+
+def html_to_lines(part):
+    """Turn a piece of HTML into a list of clean lines, one per list item or line.
+
+    Works for all three ways companies write a section:
+    "<ul><li>SQL</li><li>Python</li></ul>"  -> ["SQL", "Python"]
+    "• SQL<br/>• Python"                   -> ["SQL", "Python"]
+    "<p>We need SQL.</p>"                   -> ["We need SQL."]
+    """
+    text = LINE_BREAK_TAG.sub("\n", part)
+    text = ANY_TAG.sub(" ", text)
+    text = html.unescape(text)          # "&amp;" -> "&", "&#039;" -> "'"
+    lines = []
+    for line in text.split("\n"):
+        line = re.sub(r"\s+", " ", line).strip()
+        line = BULLET_AT_START.sub("", line)
+        if line != "":
+            lines.append(line)
+    return lines
+
+
+def read_section(page, itemprop):
+    """The lines of one section, found by its itemprop marker; [] if there is none.
+
+    Example: read_section(page, "requirements") -> ["Magabiztos Python-tudás", "Erős SQL", ...]
+    """
+    match = re.search(r'itemprop="' + itemprop + r'"[^>]*>', page)
+    if match is None:
+        return []
+    rest = page[match.end():]
+    end = len(rest)
+    for marker in SECTION_END_MARKERS:
+        position = rest.find(marker)
+        if position >= 0 and position < end:
+            end = position
+    return html_to_lines(rest[:end])
+
+
+def read_tech_tags(page):
+    """profession.hu's technology tags as one text; "" if the page has none.
+
+    On the page: <div class="my-auto techStacks"><span class="bullet-wrapper">PYTHON</span>...</div>
+    Example: -> "PYTHON, SQL, GIT"
+    """
+    match = re.search(r'class="my-auto techStacks">(.*?)</div>', page, re.DOTALL)
+    if match is None:
+        return ""
+    tags = []
+    for tag in re.findall(r'class="bullet-wrapper">(.*?)</span>', match.group(1), re.DOTALL):
+        tag = html.unescape(tag).strip()
+        if tag != "":
+            tags.append(tag)
+    return ", ".join(tags)
+
+
+def read_requirement_tags(page):
+    """profession.hu's requirement tags: language, experience, education.
+
+    On the page: <li class="sr-only"><h3> Elvárások </h3><ul><li> Angol középfok </li>...
+    Example: -> ["Angol középfok", "3-5 év tapasztalat", "Főiskola"]
+    """
+    match = re.search(r"<h3>\s*Elvárások\s*</h3>\s*<ul>(.*?)</ul>", page, re.DOTALL)
+    if match is None:
+        return []
+    return html_to_lines(match.group(1))
 
 
 def get_page_html(fields):
@@ -94,39 +174,41 @@ def get_page_html(fields):
 
 
 def main(items):
+    
+    
+    
     jobs = []
     for item in items:
         fields = item["json"]
 
-        # 1. Start from the job card: every field except the HTTP ones.
+
         job = {}
         for key, value in fields.items():
             if key not in HTTP_FIELDS:
                 job[key] = value
 
         # 2. The page as plain text.
-        text = strip_html(get_page_html(fields))
+        page = get_page_html(fields)
+        text = strip_html(page)
 
-        # 3. The "required technologies" block, if the page has one.
-        techs = ""
-        start = find_first_heading(text, TECHS_HEADINGS)
-        if start >= 0:
-            techs = js_slice(text, start, start + TECHS_LIMIT)
-
-        # 4. The description: from its heading if found, otherwise the whole text,
+        # 3. The description: from its heading if found, otherwise the whole text,
         #    up to where the posting ends on the page (then the safety limit).
         description = text
         start = find_first_heading(text, DESCRIPTION_HEADINGS)
         if start >= 0:
-            description = js_slice(text, start)
+            description = text[start:]
         end = find_end(description, DESCRIPTION_END_MARKERS)
         if end > 0:
-            description = js_trim(js_slice(description, 0, end))
-        description = js_slice(description, 0, DESCRIPTION_LIMIT)
+            description = description[:end].strip()
+        description = description[:DESCRIPTION_LIMIT]
         if description == "":
             description = "(nem sikerult kinyerni)"  # "could not extract"
 
-        job["techs"] = techs
+        # 4. The sections and the tags, read from the HTML, not from the text.
+        job["techs"] = read_tech_tags(page)
         job["description"] = description
+        for field, itemprop in SECTIONS.items():
+            job[field] = read_section(page, itemprop)
+        job["tags"] = read_requirement_tags(page)
         jobs.append({"json": job})
     return jobs

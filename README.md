@@ -35,6 +35,15 @@ Three remote job APIs (Remotive, RemoteOK, Arbeitnow) were a second branch until
 switched the branch off, and on 2026-11-18 removed its code. Their postings stay in
 the database.
 
+On a profession.hu page every company names its sections differently: in 124
+postings the requirements ran under 16 different headings ("Requirements",
+"Elvárások", "What You Will Bring:", ...). The HTML under the heading, though,
+carries the same marker on every page (`itemprop="requirements"`, `"tasks"`,
+`"other"`, `"offer"`). So `extract_text.py` reads the sections by that marker
+into their own lists (`requirements`, `tasks`, `nice_to_have`, `offer`), next to
+the full `description`. It also keeps profession.hu's own tags: `tags` (language,
+experience, education) and `techs` (technologies).
+
 The daily list also reports how many job cards the profession.hu result pages
 held. On a normal day that is about a thousand; zero means the pages did not
 arrive (blocked or changed), and the list gets an alert that the evening
