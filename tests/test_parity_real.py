@@ -12,7 +12,6 @@ from datetime import datetime
 
 import pytest
 
-import api_parse
 import dedupe
 import extract_text
 import filter_new
@@ -101,19 +100,6 @@ def test_extract_text(collector):
         new_text, old_text = new_job.pop("description"), old_job.pop("description")
         assert new_job == old_job
         assert new_text.startswith(old_text) or old_text.startswith(new_text)
-
-
-def test_api_parse(collector):
-    _, run, state = collector
-    responses = merge_by_position(outputs(run, "Remote API URL-ek"),
-                                  outputs(run, "Remote API-k letoltese"))
-    expected = as_json(outputs(run, "API talalatok feldolgozasa"))
-    # Intentional difference: RemoteOK's double-encoded UTF-8 is repaired.
-    for job in expected:
-        if job["forras"] == "remoteok":
-            for field in ("title", "company", "location", "description"):
-                job[field] = api_parse.fix_mojibake(job[field])
-    assert as_json(api_parse.main([state_item(state)] + responses)) == expected
 
 
 def test_dedupe(collector):

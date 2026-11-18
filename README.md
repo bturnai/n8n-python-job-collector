@@ -30,10 +30,10 @@ schedule 21:30 / webhook / manual
   └─ write allasok_<date>.json/.md, latott.json
 ```
 
-Three remote job APIs (Remotive, RemoteOK, Arbeitnow; `api_urls.py`,
-`api_parse.py`) were a second branch until November 2026. In two months only one
-of their postings made my shortlist, so the branch is off by default;
-`workflow_collector.py --remote-apis` puts it back.
+Three remote job APIs (Remotive, RemoteOK, Arbeitnow) were a second branch until
+2026-11-10. In two months only one of their 80 postings made my shortlist, so I
+switched the branch off, and on 2026-11-18 removed its code. Their postings stay in
+the database.
 
 The daily list also reports how many job cards the profession.hu result pages
 held. On a normal day that is about a thousand; zero means the pages did not

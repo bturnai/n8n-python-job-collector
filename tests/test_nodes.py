@@ -6,8 +6,6 @@ JavaScript expressions, so they pin the behaviour the stored state depends on.
 import json
 from datetime import datetime
 
-import api_parse
-import api_urls
 import dedupe
 import email_attachments
 import extract_text
@@ -121,45 +119,6 @@ def test_extract_text_safety_limit_without_end_marker():
     html = "<h2>Állás leírása</h2><p>" + "x" * 20000 + "</p>"
     job = extract_text.main([{"json": {"id": "9", "data": html}}])[0]["json"]
     assert len(job["description"]) == extract_text.DESCRIPTION_LIMIT
-
-# --- remote APIs ------------------------------------------------------------
-
-def api_item(source, body):
-    return {"json": {"forras": source, "data": json.dumps(body)}}
-
-
-def test_api_urls_asks_each_source_once():
-    sources = [item["json"]["forras"] for item in api_urls.main([])]
-    assert sources == ["remotive", "remoteok", "arbeitnow"]
-    assert api_urls.main([])[0]["json"]["url"] == (
-        "https://remotive.com/api/remote-jobs?search=data&limit=40")
-
-
-def test_encode_uri_component_matches_javascript():
-    # JS: encodeURIComponent("data analyst é/?") === "data%20analyst%20%C3%A9%2F%3F"
-    assert api_urls.encode_uri_component("data analyst é/?") == "data%20analyst%20%C3%A9%2F%3F"
-    assert api_urls.encode_uri_component("A-z_0.9!~*'()") == "A-z_0.9!~*'()"
-
-
-def test_api_parse_normalises_sources_and_repairs_remoteok_text():
-    remoteok = [{"legal": "notice"}, {"id": 5, "position": "Data Scientist", "company": "Co",
-                                      "url": "https://r/5", "description": "<p>donâ\x80\x99t</p>",
-                                      "salary_min": 50000, "salary_max": 70000, "tags": ["python", None]}]
-    arbeitnow = {"data": [{"slug": "a", "title": "BI Analyst", "company_name": "X", "url": "https://a",
-                           "remote": True},
-                          {"slug": "b", "title": "Data Engineer", "company_name": "Y", "url": "https://b",
-                           "remote": False}]}
-    result = api_parse.main([api_item("remoteok", remoteok), api_item("arbeitnow", arbeitnow)])
-    jobs = {item["json"]["id"]: item["json"] for item in result}
-    assert set(jobs) == {"remoteok:5", "arbeitnow:a"}
-    assert jobs["remoteok:5"]["description"] == "don’t"
-    assert jobs["remoteok:5"]["salaryInfo"] == "50000-70000"
-    assert jobs["remoteok:5"]["techs"] == "python, "
-
-
-def test_api_parse_ignores_broken_bodies():
-    assert api_parse.main([{"json": {"forras": "remotive", "data": "<html>error</html>"}}]) == []
-
 
 # --- de-duplication and report -------------------------------------------------
 

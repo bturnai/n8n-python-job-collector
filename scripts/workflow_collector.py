@@ -68,10 +68,7 @@ def write_node(name, x, y, path_expr):
                                                "options": {}}}
 
 
-def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=True,
-                   remote_apis=False):
-    """remote_apis: also query Remotive, RemoteOK and Arbeitnow. Off since 2026-11-10:
-    in two months only one of their postings reached the shortlist."""
+def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=True):
     data_dir = data_dir.rstrip("/")
     state_path = f"{data_dir}/allapot/latott.json"
     alert_dir = f"{data_dir}/levelek"
@@ -125,17 +122,7 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
         python_node("Ertesito levelek feldolgozasa", "mail_parse", 896, 864),
         merge_node("Profession + levelek", 1792, 0, by_position=False),
     ]
-    if remote_apis:
-        nodes += [
-            python_node("Remote API URL-ek", "api_urls", 0, 432),
-            http_node("Remote API-k letoltese", 224, 432,
-                      {"name": "Accept", "value": "application/json"}),
-            merge_node("API-k + forrasok", 448, 432, by_position=True),
-            merge_node("API-k + latott-lista", 672, 432, by_position=False),
-            python_node("API talalatok feldolgozasa", "api_parse", 896, 432),
-            merge_node("Forrasok egyesitese", 1792, 224, by_position=False),
-        ]
-    starts = ["Keresesi URL-ek", "Latott-lista beolvasasa", "Ertesito levelek beolvasasa"] + (["Remote API URL-ek"] if remote_apis else [])
+    starts = ["Keresesi URL-ek", "Latott-lista beolvasasa", "Ertesito levelek beolvasasa"]
     triggers = ["Kezi inditas", "Webhook inditas"]
     if schedule:
         nodes.insert(0, {"name": "Minden nap 21:30", "type": "n8n-nodes-base.scheduleTrigger",
@@ -173,21 +160,8 @@ def build_workflow(data_dir, wf_id, name, webhook_path, webhook_id, schedule=Tru
         ("Levelek + latott-lista", "Ertesito levelek feldolgozasa", 0),
         ("Hirdetes-szoveg kinyerese", "Profession + levelek", 0),
         ("Ertesito levelek feldolgozasa", "Profession + levelek", 1),
+        ("Profession + levelek", "Duplikatumok kiszurese", 0),
     ]
-    if remote_apis:
-        links += [
-            ("Profession + levelek", "Forrasok egyesitese", 0),
-            ("Remote API URL-ek", "Remote API-k letoltese", 0),
-            ("Remote API URL-ek", "API-k + forrasok", 0),
-            ("Remote API-k letoltese", "API-k + forrasok", 1),
-            ("Latott-lista JSON", "API-k + latott-lista", 0),
-            ("API-k + forrasok", "API-k + latott-lista", 1),
-            ("API-k + latott-lista", "API talalatok feldolgozasa", 0),
-            ("API talalatok feldolgozasa", "Forrasok egyesitese", 1),
-            ("Forrasok egyesitese", "Duplikatumok kiszurese", 0),
-        ]
-    else:
-        links.append(("Profession + levelek", "Duplikatumok kiszurese", 0))
     connections = {}
     for source, target, index in links:
         outputs = connections.setdefault(source, {"main": [[]]})["main"][0]
@@ -208,12 +182,9 @@ def main(argv):
     parser.add_argument("--webhook-path", default="allasfigyelo-inditas")
     parser.add_argument("--webhook-id", default="a11a5f19-0000-4000-8000-000000000001")
     parser.add_argument("--no-schedule", action="store_true")
-    parser.add_argument("--remote-apis", action="store_true",
-                        help="also query Remotive, RemoteOK and Arbeitnow (off since 2026-11-10)")
     args = parser.parse_args(argv)
     workflow = build_workflow(args.data_dir, args.id, args.name, args.webhook_path,
-                              args.webhook_id, schedule=not args.no_schedule,
-                              remote_apis=args.remote_apis)
+                              args.webhook_id, schedule=not args.no_schedule)
     pathlib.Path(args.out).write_text(json.dumps([workflow], ensure_ascii=False, indent=1))
     print(f"{args.out}: {len(workflow['nodes'])} nodes")
 
